@@ -1,0 +1,14 @@
+name: mindhunter_academy
+description: Duolingo-style trainer for reading people, spotting deception and statement analysis.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
