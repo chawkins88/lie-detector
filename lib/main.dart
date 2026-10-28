@@ -124,7 +124,9 @@ enum Flag {
   openQuestion('Question Design', ChallengeType.scenario),
   probeHotSpot('Probing Hot Spots', ChallengeType.scenario),
   contamination('Avoiding Contamination', ChallengeType.scenario),
-  rapport('Rapport & Pressure', ChallengeType.scenario);
+  rapport('Rapport & Pressure', ChallengeType.scenario),
+  cleanBaseline('Reading a Clean Baseline', ChallengeType.baseline),
+  cleanStatement('Spotting Truthful Statements', ChallengeType.statement);
 
   const Flag(this.label, this.family);
   final String label;
@@ -160,7 +162,7 @@ class Challenge {
         level: 1,
         type: ChallengeType.baseline,
         flag: flag,
-        prompt: 'Which moment breaks the baseline?',
+        prompt: 'Which moment breaks the baseline, if any?',
         context: context,
         options: moments,
         correct: <int>{answer},
@@ -226,7 +228,7 @@ class Challenge {
     required String insight,
     bool highLoad = false,
     int level = 4,
-    String prompt = 'Tap the sentence with the structural flaw.',
+    String prompt = 'Tap the sentence with the structural flaw, if there is one.',
   }) =>
       Challenge(
         id: id,
@@ -281,10 +283,25 @@ class Challenge {
   /// ordinary dialogue and distractors.
   final bool highLoad;
 
+  /// Answer index for "nothing here: no deception flag".
+  static const int clean = -1;
+
+  /// Baseline and statement questions always offer the "nothing here" choice,
+  /// so its presence never hints at the answer.
+  bool get offersClean => type == ChallengeType.baseline || type == ChallengeType.statement;
+  bool get isClean => correct.contains(clean);
+
+  String get cleanLabel {
+    if (type == ChallengeType.baseline) return 'Nothing here: every moment stays on baseline.';
+    if (level == 8) return 'Nothing here: this message reads as truthful.';
+    return 'Nothing here: this statement reads as truthful.';
+  }
+
   int get requiredSelections => correct.length;
   bool get isMultiSelect => type == ChallengeType.cluster;
 
   String get correctAnswerText {
+    if (isClean) return cleanLabel;
     final indices = correct.toList()..sort();
     final lines = indices.map((i) => switch (type) {
           ChallengeType.statement => 'Sentence ${i + 1}: "${options[i]}"',
@@ -310,6 +327,7 @@ class Challenge {
       context: context,
       options: <String>[for (final i in order) options[i]],
       correct: <int>{
+        if (correct.contains(clean)) clean,
         for (var n = 0; n < order.length; n++)
           if (correct.contains(order[n])) n,
       },
@@ -1299,7 +1317,7 @@ class Curriculum {
       id: 'v1',
       flag: Flag.qualifier,
       level: 5,
-      prompt: 'Tap the sentence with the verbal tell.',
+      prompt: 'Tap the sentence with the verbal tell, if there is one.',
       question: 'Did you see who took the laptop?',
       sentences: <String>[
         'I was at my desk the whole afternoon, working on the budget report.',
@@ -1313,7 +1331,7 @@ class Curriculum {
       id: 'v2',
       flag: Flag.distancing,
       level: 5,
-      prompt: 'Tap the sentence with the verbal tell.',
+      prompt: 'Tap the sentence with the verbal tell, if there is one.',
       question: 'What\'s your relationship with Ms. Carter?',
       sentences: <String>[
         'We were in the same department for about two years, on the same floor.',
@@ -1327,7 +1345,7 @@ class Curriculum {
       id: 'v3',
       flag: Flag.minimizing,
       level: 5,
-      prompt: 'Tap the sentence with the verbal tell.',
+      prompt: 'Tap the sentence with the verbal tell, if there is one.',
       question: 'What happened with the company credit card?',
       sentences: <String>[
         'I just used it a couple of times for small personal stuff.',
@@ -1341,7 +1359,7 @@ class Curriculum {
       id: 'v4',
       flag: Flag.stalling,
       level: 5,
-      prompt: 'Tap the sentence with the verbal tell.',
+      prompt: 'Tap the sentence with the verbal tell, if there is one.',
       question: 'Were you at the warehouse on Sunday night?',
       sentences: <String>[
         'Was I at the warehouse Sunday night? Why would you ask me that?',
@@ -1355,7 +1373,7 @@ class Curriculum {
       id: 'v5',
       flag: Flag.qualifier,
       level: 5,
-      prompt: 'Tap the sentence with the verbal tell.',
+      prompt: 'Tap the sentence with the verbal tell, if there is one.',
       question: 'Did you leave the gate unlocked?',
       sentences: <String>[
         'I closed up the yard at six, same as every other weekday.',
@@ -1369,7 +1387,7 @@ class Curriculum {
       id: 'v6',
       flag: Flag.distancing,
       level: 5,
-      prompt: 'Tap the sentence with the verbal tell.',
+      prompt: 'Tap the sentence with the verbal tell, if there is one.',
       question: 'Tell me about the argument with your brother.',
       sentences: <String>[
         'Danny and I have always fought about money, ever since we were kids.',
@@ -1383,7 +1401,7 @@ class Curriculum {
       id: 'v7',
       flag: Flag.minimizing,
       level: 5,
-      prompt: 'Tap the sentence with the verbal tell.',
+      prompt: 'Tap the sentence with the verbal tell, if there is one.',
       highLoad: true,
       question: 'How did the client data end up on your personal laptop?',
       sentences: <String>[
@@ -1400,7 +1418,7 @@ class Curriculum {
       id: 'v8',
       flag: Flag.stalling,
       level: 5,
-      prompt: 'Tap the sentence with the verbal tell.',
+      prompt: 'Tap the sentence with the verbal tell, if there is one.',
       highLoad: true,
       question: 'Did you change the numbers in the inventory report?',
       sentences: <String>[
@@ -1417,7 +1435,7 @@ class Curriculum {
       id: 'v9',
       flag: Flag.distancing,
       level: 5,
-      prompt: 'Tap the sentence with the verbal tell.',
+      prompt: 'Tap the sentence with the verbal tell, if there is one.',
       highLoad: true,
       question: 'Walk me through the night your roommate\'s car was damaged.',
       sentences: <String>[
@@ -1434,7 +1452,7 @@ class Curriculum {
       id: 'v10',
       flag: Flag.qualifier,
       level: 5,
-      prompt: 'Tap the sentence with the verbal tell.',
+      prompt: 'Tap the sentence with the verbal tell, if there is one.',
       highLoad: true,
       question: 'Did you take money from the church collection?',
       sentences: <String>[
@@ -1759,7 +1777,7 @@ class Curriculum {
       id: 'd1',
       flag: Flag.nonAnswer,
       level: 8,
-      prompt: 'Tap the line with the red flag.',
+      prompt: 'Tap the line with the red flag, if there is one.',
       question: 'You text your roommate: "Did you eat my leftover pizza?"',
       sentences: <String>[
         'hey! just got home from work, so tired, long day lol',
@@ -1773,7 +1791,7 @@ class Curriculum {
       id: 'd2',
       flag: Flag.distancing,
       level: 8,
-      prompt: 'Tap the line with the red flag.',
+      prompt: 'Tap the line with the red flag, if there is one.',
       question: 'An email from a manager to HR after a complaint from an employee named Jordan.',
       sentences: <String>[
         'Jordan has been on my team for two years and is usually a strong performer.',
@@ -1787,7 +1805,7 @@ class Curriculum {
       id: 'd3',
       flag: Flag.minimizing,
       level: 8,
-      prompt: 'Tap the line with the red flag.',
+      prompt: 'Tap the line with the red flag, if there is one.',
       question: 'Your partner texts after your joint bank account is overdrawn.',
       sentences: <String>[
         'it was just a little online shopping, nothing major',
@@ -1801,7 +1819,7 @@ class Curriculum {
       id: 'd4',
       flag: Flag.tenseShift,
       level: 8,
-      prompt: 'Tap the line with the red flag.',
+      prompt: 'Tap the line with the red flag, if there is one.',
       question: 'A customer\'s message to an airline about a "lost" bag.',
       sentences: <String>[
         'I checked my blue suitcase at the desk in Denver at about 6 a.m.',
@@ -1815,7 +1833,7 @@ class Curriculum {
       id: 'd5',
       flag: Flag.qualifier,
       level: 8,
-      prompt: 'Tap the line with the red flag.',
+      prompt: 'Tap the line with the red flag, if there is one.',
       question: 'An online review of a mattress, posted from a brand-new account.',
       sentences: <String>[
         'I bought this mattress three weeks ago after my old one finally gave out.',
@@ -1829,7 +1847,7 @@ class Curriculum {
       id: 'd6',
       flag: Flag.temporalGap,
       level: 8,
-      prompt: 'Tap the line with the red flag.',
+      prompt: 'Tap the line with the red flag, if there is one.',
       question: 'Your teen texts at 2 a.m. after missing curfew.',
       sentences: <String>[
         'we left the movie at like 10:30 and got food at the diner on main',
@@ -1843,7 +1861,7 @@ class Curriculum {
       id: 'd7',
       flag: Flag.pronounDrop,
       level: 8,
-      prompt: 'Tap the line with the red flag.',
+      prompt: 'Tap the line with the red flag, if there is one.',
       highLoad: true,
       question: 'A coworker\'s Slack message explaining why a client folder disappeared.',
       sentences: <String>[
@@ -1860,7 +1878,7 @@ class Curriculum {
       id: 'd8',
       flag: Flag.nonAnswer,
       level: 8,
-      prompt: 'Tap the line with the red flag.',
+      prompt: 'Tap the line with the red flag, if there is one.',
       highLoad: true,
       question: 'A dating-app match replies after you ask: "Are you still seeing anyone else?"',
       sentences: <String>[
@@ -1877,7 +1895,7 @@ class Curriculum {
       id: 'd9',
       flag: Flag.distancing,
       level: 8,
-      prompt: 'Tap the line with the red flag.',
+      prompt: 'Tap the line with the red flag, if there is one.',
       highLoad: true,
       question: 'A business partner\'s email about money missing from your shared account.',
       sentences: <String>[
@@ -1894,7 +1912,7 @@ class Curriculum {
       id: 'd10',
       flag: Flag.qualifier,
       level: 8,
-      prompt: 'Tap the line with the red flag.',
+      prompt: 'Tap the line with the red flag, if there is one.',
       highLoad: true,
       question: 'A contractor replies after you ask why the job is two weeks late.',
       sentences: <String>[
@@ -1906,6 +1924,180 @@ class Curriculum {
       ],
       answer: 2,
       insight: '"Honestly" plus an absolute ("every single day") boosts the one claim you could easily check with a neighbor. The specific, checkable details elsewhere (supplier delays, photos) don\'t need a boost.',
+    ),
+
+    // ── CLEAN CASES: the right answer is "nothing here" ───────────────────
+    Challenge.baseline(
+      id: 'bc1',
+      flag: Flag.cleanBaseline,
+      context: 'Maya is asked about a missing delivery.\n\nBASELINE: Maya talks fast, gestures with both hands and laughs a lot, even about frustrating things.',
+      moments: <String>[
+        'Asked where she was at noon → fast, both hands moving: "Lunch run! Tacos, obviously."',
+        'Asked if she signed for the box → laughs, hands wide: "Nope, I wasn\'t even here!"',
+        'Asked who was at the front desk → rapid-fire, gesturing, names Kevin and laughs.',
+        'Asked if the questions annoy her → laughs, hands up: "A little bit, yeah!"',
+      ],
+      answer: Challenge.clean,
+      insight: 'Every answer matches her baseline: fast, gesturing, laughing. "Nope, I wasn\'t even here" is a direct denial, and admitting she\'s a little annoyed is normal. Calling a lie here would be a false alarm, the most common mistake new analysts make.',
+    ),
+    Challenge.baseline(
+      id: 'bc2',
+      flag: Flag.cleanBaseline,
+      context: 'Omar is asked about a cracked office window.\n\nBASELINE: Omar is quiet, sits very still, speaks slowly and looks down when he thinks.',
+      moments: <String>[
+        'Asked when he arrived → still, slow: "Around eight-fifteen. The bus was late."',
+        'Asked if he saw the crack → looks down, pauses, slowly: "Not until Lisa pointed it out."',
+        'Asked if he broke it → still, eyes down for a moment, then: "No. I didn\'t touch it."',
+        'Asked who else was in early → slow and quiet, names two people, hands still.',
+      ],
+      answer: Challenge.clean,
+      insight: 'Looking down before answering is Omar\'s normal thinking pattern, and the pause before "No" matches his slow baseline. Without a change, there\'s no signal: behavior means nothing on its own, only change does.',
+    ),
+    Challenge.baseline(
+      id: 'bc3',
+      flag: Flag.cleanBaseline,
+      highLoad: true,
+      context: 'Hannah is interviewed about expense fraud.\n\nBASELINE: Hannah twists her rings, crosses and uncrosses her legs, and clears her throat every minute or so. She\'s been like this since she sat down.',
+      moments: <String>[
+        'Asked about the hotel bill → twists a ring, clears her throat: "That was the conference."',
+        'Asked if she added personal charges → uncrosses her legs, ring in hand: "No, never."',
+        'Asked who approved the trip → crosses her legs, clears her throat, names her manager.',
+        'Asked about the taxi receipts → twists her ring and explains each ride by date.',
+      ],
+      answer: Challenge.clean,
+      insight: 'She looks like a nervous wreck, but every behavior was there from the moment she sat down. Restless people don\'t become liars by staying restless. Being able to say "nothing here" is part of mastering baselines.',
+    ),
+    Challenge.statement(
+      id: 'sc1',
+      flag: Flag.cleanStatement,
+      level: 4,
+      question: 'What did you do after work yesterday?',
+      sentences: <String>[
+        'I left the office at five-thirty and stopped at the gym for about an hour.',
+        'I got home around seven, made dinner and called my sister for twenty minutes.',
+        'I watched a show with my roommate and went to bed around eleven.',
+      ],
+      answer: Challenge.clean,
+      insight: 'Clean: consistent "I", past tense throughout, and every stretch of time accounted for with rough times. Truthful accounts don\'t need to be perfect, just committed and continuous.',
+    ),
+    Challenge.statement(
+      id: 'sc2',
+      flag: Flag.cleanStatement,
+      level: 4,
+      question: 'Did you take the cash from the register?',
+      sentences: <String>[
+        'No, I didn\'t take it.',
+        'I counted the drawer at close and it was short forty dollars, so I wrote it on the sheet.',
+        'I told my manager about it when she came in the next morning.',
+      ],
+      answer: Challenge.clean,
+      insight: 'A direct, past-tense denial ("No, I didn\'t take it") followed by specific, checkable actions. Reporting the shortage herself fits innocence too. Not every statement hides a flaw.',
+    ),
+    Challenge.statement(
+      id: 'sc3',
+      flag: Flag.cleanStatement,
+      level: 4,
+      highLoad: true,
+      question: 'Walk me through the night of the party.',
+      sentences: <String>[
+        'We got to Ana\'s place around nine, I think, maybe a little after.',
+        'I had two drinks over the night and spent most of it on the back porch talking with Chris.',
+        'Around eleven-thirty I heard yelling inside, so I went in to see what was going on.',
+        'I saw Ana and her boyfriend arguing by the kitchen, and I left about ten minutes later.',
+        'I texted Chris when I got home, around midnight, to say I made it back.',
+      ],
+      answer: Challenge.clean,
+      insight: '"I think, maybe a little after" sounds like hedging, but admitting uncertainty about a minor time is a truth marker, not a tell. The "I" never drops, the tense stays past, and the times connect from nine to midnight. High-load statements can be clean too.',
+    ),
+    Challenge.statement(
+      id: 'vc1',
+      flag: Flag.cleanStatement,
+      level: 5,
+      prompt: 'Tap the sentence with the verbal tell, if there is one.',
+      question: 'Did you tell anyone about the layoffs before the announcement?',
+      sentences: <String>[
+        'No, I didn\'t tell anyone.',
+        'I found out in the managers\' meeting on Tuesday, along with the rest of the team.',
+        'My wife asked me that night why I seemed stressed, and I said it was a work thing I couldn\'t discuss.',
+      ],
+      answer: Challenge.clean,
+      insight: 'A direct denial, no qualifiers, no distancing, and an unflattering detail (seeming stressed) volunteered unprompted. It reads as a committed, truthful account.',
+    ),
+    Challenge.statement(
+      id: 'vc2',
+      flag: Flag.cleanStatement,
+      level: 5,
+      prompt: 'Tap the sentence with the verbal tell, if there is one.',
+      question: 'How do you know Mr. Ellis?',
+      sentences: <String>[
+        'Robert and I worked together at the bank for about six years.',
+        'We had lunch every few weeks, and I went to his daughter\'s wedding in June.',
+        'I haven\'t talked to Robert since he moved to Denver in the fall.',
+      ],
+      answer: Challenge.clean,
+      insight: 'He uses the name "Robert" consistently, with no switch to "that man" or "that guy". Specific shared history and a clear timeline: no verbal tells here.',
+    ),
+    Challenge.statement(
+      id: 'vc3',
+      flag: Flag.cleanStatement,
+      level: 5,
+      prompt: 'Tap the sentence with the verbal tell, if there is one.',
+      highLoad: true,
+      question: 'Did you damage the rental car?',
+      sentences: <String>[
+        'Yes, I scraped the back bumper on a parking post on Saturday.',
+        'I was backing out of a tight spot at the grocery store on Elm.',
+        'I took photos right away and sent them to the rental company that afternoon.',
+        'The agent told me to report it again when I returned the car, so I did.',
+        'I have the email and the photos on my phone if you want to see them.',
+      ],
+      answer: Challenge.clean,
+      insight: 'An admission, not a denial: "Yes, I scraped the bumper." Owned actions, past tense, a checkable timeline and evidence offered. Offering proof isn\'t a tell when it\'s specific and checkable.',
+    ),
+    Challenge.statement(
+      id: 'dc1',
+      flag: Flag.cleanStatement,
+      level: 8,
+      prompt: 'Tap the line with the red flag, if there is one.',
+      question: 'You text a friend: "Did you finish the last of my coffee?"',
+      sentences: <String>[
+        'yes sorry!! I had the last cup this morning',
+        'I\'ll grab a new bag on my way home tonight',
+        'the dark roast one right?',
+      ],
+      answer: Challenge.clean,
+      insight: 'A direct admission and a concrete fix. Short, casual texts can be completely clean.',
+    ),
+    Challenge.statement(
+      id: 'dc2',
+      flag: Flag.cleanStatement,
+      level: 8,
+      prompt: 'Tap the line with the red flag, if there is one.',
+      question: 'A coworker replies after you ask why the report is late.',
+      sentences: <String>[
+        'That\'s on me, I underestimated how long the data cleanup would take.',
+        'I finished the charts yesterday and I\'m writing the summary now.',
+        'You\'ll have it by 3 p.m. today, and I\'ll flag anything that looks off.',
+      ],
+      answer: Challenge.clean,
+      insight: 'Ownership ("that\'s on me"), specifics and a checkable deadline. No minimizing, no qualifiers, no blame-shifting.',
+    ),
+    Challenge.statement(
+      id: 'dc3',
+      flag: Flag.cleanStatement,
+      level: 8,
+      prompt: 'Tap the line with the red flag, if there is one.',
+      highLoad: true,
+      question: 'An online review of a local plumber.',
+      sentences: <String>[
+        'I called on Tuesday morning about a leak under our kitchen sink.',
+        'They gave me a two-hour window and showed up about twenty minutes late.',
+        'The plumber, Dave, replaced a corroded fitting and explained what had happened.',
+        'The bill was a bit more than the quote because of an extra part, which he showed me.',
+        'Overall I\'d use them again, but I wish they had called about running late.',
+      ],
+      answer: Challenge.clean,
+      insight: 'Real reviews mix positives with small negatives (late arrival, a higher bill), name specifics and skip the superlatives. No "trust me", no "best ever". This one is clean.',
     ),
   ];
 }
@@ -3657,6 +3849,23 @@ class ChallengeView extends StatelessWidget {
 
   VoidCallback? _tap(int i) => revealed ? null : () => onOptionTap(i);
 
+  Widget _cleanTile() {
+    final visual = _visual(Challenge.clean);
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: OptionTile(
+        visual: visual,
+        onTap: _tap(Challenge.clean),
+        leading: Icon(
+          Icons.verified_user,
+          color: visual == OptionVisual.idle ? Palette.teal : OptionStyle.of(visual).border,
+        ),
+        text: challenge.cleanLabel,
+        bold: true,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final List<Widget> body = switch (challenge.type) {
@@ -3697,6 +3906,7 @@ class ChallengeView extends StatelessWidget {
           leading: LetterBadge(letter: String.fromCharCode(65 + i), visual: _visual(i)),
           text: challenge.options[i],
         ),
+      _cleanTile(),
     ];
   }
 
@@ -3846,6 +4056,7 @@ class ChallengeView extends StatelessWidget {
                 )
               : null,
         ),
+      _cleanTile(),
     ];
   }
 }
@@ -4324,7 +4535,7 @@ class FeedbackSheet extends StatelessWidget {
               const SizedBox(height: 10),
             ],
             Text(
-              '🚩 ${challenge.flag.label}',
+              '${challenge.isClean ? '✅' : '🚩'} ${challenge.flag.label}',
               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14),
             ),
             const SizedBox(height: 6),

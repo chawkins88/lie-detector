@@ -35,6 +35,51 @@ jobs:
           rm -f test/widget_test.dart analysis_options.yaml
           sed -i 's/android:label="[^"]*"/android:label="MindHunter Academy"/' android/app/src/main/AndroidManifest.xml
 
+      - name: Sign every build with the same key
+        # A fixed key lets new versions install over old ones on the phone.
+        run: |
+          if [ -f android/app/build.gradle.kts ]; then
+            cat >> android/app/build.gradle.kts <<'GRADLE'
+
+          android {
+              signingConfigs {
+                  getByName("debug") {
+                      storeFile = file("../../signing/app.keystore")
+                      storeType = "pkcs12"
+                      storePassword = "android"
+                      keyAlias = "mindhunter"
+                      keyPassword = "android"
+                  }
+              }
+              buildTypes {
+                  getByName("release") {
+                      signingConfig = signingConfigs.getByName("debug")
+                  }
+              }
+          }
+          GRADLE
+          else
+            cat >> android/app/build.gradle <<'GRADLE'
+
+          android {
+              signingConfigs {
+                  debug {
+                      storeFile file("../../signing/app.keystore")
+                      storeType "pkcs12"
+                      storePassword "android"
+                      keyAlias "mindhunter"
+                      keyPassword "android"
+                  }
+              }
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.debug
+                  }
+              }
+          }
+          GRADLE
+          fi
+
       - name: Analyze
         run: flutter analyze --no-fatal-infos --no-fatal-warnings lib
 
@@ -45,6 +90,9 @@ jobs:
         run: |
           flutter build apk --release
           cp build/app/outputs/flutter-apk/app-release.apk MindHunterAcademy.apk
+          # Fail the build if the APK isn't signed with the fixed key.
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs MindHunterAcademy.apk | grep -q "CN=MindHunter Academy"
 
       - uses: actions/upload-artifact@v4
         with:

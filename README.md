@@ -13,6 +13,9 @@ Every push to `main` builds an APK on GitHub Actions.
 3. Under **Artifacts**, tap **MindHunterAcademy-apk** to download the .zip.
 4. Open the .zip in Files, tap `MindHunterAcademy.apk`, and allow "Install unknown apps" when asked.
 
+Every build is signed with the same key (`signing/app.keystore`), so new versions install
+over old ones. It's a personal sideloading key, not a Play Store key.
+
 ## Run it from source
 
 Needs Flutter 3.24 or newer (uses `PopScope.onPopInvokedWithResult`).
@@ -28,7 +31,7 @@ Or paste `lib/main.dart` into any new Flutter project.
 
 | Area | Where in `main.dart` |
 | --- | --- |
-| Curriculum: 8 levels, 90 challenges (standard + High Cognitive Load) | `Curriculum` |
+| Curriculum: 8 levels, 102 challenges (standard + High Cognitive Load) | `Curriculum` |
 | Hearts, IP, streak, accuracy, weakness map | `GameState` |
 | Retry queue, difficulty swap, weighted review builder | `QuestSession`, `QuestBuilder` |
 | Mind Tree dashboard + persistent header | `MindTreeScreen`, `StatsHeader` |
@@ -46,6 +49,9 @@ Or paste `lib/main.dart` into any new Flutter project.
 8. **Digital Deception:** tells in texts, emails, reviews and DMs.
 
 Each course has 2 lessons and an adaptive review; a final exam covers everything.
+
+Baseline and statement questions always offer **"Nothing here"**, and some cases are
+genuinely truthful, so you practice not crying wolf as well as catching lies.
 
 ## Game rules
 
