@@ -251,6 +251,28 @@ class Challenge {
         });
     return lines.join('\n');
   }
+
+  /// A copy with the answer order randomized, so position never gives the
+  /// answer away. Statements keep their order: the sentences tell a story.
+  Challenge shuffled(math.Random rng) {
+    if (type == ChallengeType.statement) return this;
+    final order = List<int>.generate(options.length, (i) => i)..shuffle(rng);
+    return Challenge(
+      id: id,
+      level: level,
+      type: type,
+      flag: flag,
+      prompt: prompt,
+      context: context,
+      options: <String>[for (final i in order) options[i]],
+      correct: <int>{
+        for (var n = 0; n < order.length; n++)
+          if (correct.contains(order[n])) n,
+      },
+      insight: insight,
+      highLoad: highLoad,
+    );
+  }
 }
 
 class LevelInfo {
@@ -400,17 +422,19 @@ class Curriculum {
       id: 'b1',
       flag: Flag.vocalShift,
       context: 'Marcus is questioned about a break-in at his office.\n\n'
-          'BASELINE: In ten minutes of small talk he speaks slowly in a low, even monotone. His volume never changes.',
+          'BASELINE: In ten minutes of small talk he speaks slowly in a low, even monotone. His volume never '
+          'changes and his hands rest on the table.',
       moments: <String>[
-        'Asked where he grew up → slow, low, even voice while describing Ohio.',
-        'Asked what he did Friday night → pitch jumps and words speed up: "Just home. Movie. Nothing."',
-        'Asked if he likes his job → slow and flat: "It pays the bills."',
-        'Asked about hobbies → low monotone, talks about fishing.',
+        'Asked if he has ever been arrested → slow, low and even: "Once, in college. A bar fight."',
+        'Asked what he did Friday night → same low tone, but words come quicker: "Home. Movie. Bed."',
+        'Asked if he knows the alarm code → slow, flat, hands on the table: "Everyone on my team does."',
+        'Asked about the missing laptop → slow monotone, a long explanation of who had keys that week.',
       ],
       answer: 1,
-      insight: 'Behavior only means something against the person\'s own baseline. A sudden rise in pitch and speech '
-          'rate tied to one topic marks a "hot spot": a place to probe, not proof of a lie. Stress tightens the '
-          'vocal cords, which raises pitch.',
+      insight: 'Only the Friday answer changes his voice: same pitch, faster rate. The other answers sound '
+          'suspicious (an arrest, knowing the code, a long explanation) but his delivery never leaves baseline. '
+          'Judge the change in behavior, not how incriminating the words sound. A rate change tied to one topic '
+          'marks a hot spot to probe, not proof of a lie.',
     ),
     Challenge.baseline(
       id: 'b2',
@@ -418,15 +442,15 @@ class Curriculum {
       context: 'Dana is asked about leaked client files.\n\n'
           'BASELINE: Dana is an animated talker. Both hands move constantly while she speaks, on every topic.',
       moments: <String>[
-        'Describing her vacation → hands sweep wide as she talks.',
-        'Complaining about her boss → hands chop the air for emphasis.',
-        'Asked if she opened the client folder → hands go still and press flat on her thighs.',
-        'Talking about weekend plans → hands circle as she lists errands.',
+        'Asked if she has seen the client list → hands sweep wide: "Sure, we all use it every day."',
+        'Asked about the leak → hands chop the air angrily: "Whoever did this should be fired."',
+        'Asked if she opened the folder Tuesday → answers fully, palms resting still on her knees.',
+        'Asked who else had access → hands circle as she rattles off five coworkers by name.',
       ],
       answer: 2,
-      insight: 'Illustrator suppression. When a naturally expressive person suddenly stops gesturing, it often '
-          'reflects cognitive load or the limbic "freeze" response. The change is the signal. The same stillness '
-          'would be normal for a different person.',
+      insight: 'Illustrator suppression. For a naturally expressive person, hands that suddenly go still signal '
+          'cognitive load or the "freeze" response. The angry chopping looks dramatic, but it is still Dana '
+          'gesturing the way she always does.',
     ),
     Challenge.baseline(
       id: 'b3',
@@ -434,15 +458,15 @@ class Curriculum {
       context: 'Ray is interviewed about cash missing from his register.\n\n'
           'BASELINE: Ray sits calmly with hands loosely folded. He rarely touches his face, neck or hair.',
       moments: <String>[
-        'Talking about his kids → smiles, hands stay folded.',
-        'Describing his commute → light shrug, hands folded.',
-        'Asked about his lunch break → nods and answers, hands folded.',
-        'Asked who closed the register → rubs the back of his neck, then strokes his throat.',
+        'Asked who closed the register → hands folded, calmly names his shift partner, Luis.',
+        'Asked if he is short on money → hands folded, a small laugh: "Doesn\'t everybody?"',
+        'Asked about the camera outage → unfolds his hands and runs a thumb along his collar.',
+        'Asked when he last counted the cash → hands folded: "Around four, I think. Maybe four-thirty."',
       ],
-      answer: 3,
-      insight: 'Pacifiers (neck rubbing, throat touching, stroking) are self-soothing behaviors the brain triggers to '
-          'calm itself after a stressor. A pacifier right after a specific question, against a hands-still baseline, '
-          'is a strong hot spot.',
+      answer: 2,
+      insight: 'Touching the neck or collar is a pacifier: a self-soothing reflex after a stressor. Against a '
+          'hands-folded baseline it stands out. Blaming a coworker, joking about money and hedging ("I think") '
+          'feel suspicious, but none of them is a change in Ray\'s body.',
     ),
     Challenge.baseline(
       id: 'b4',
@@ -450,15 +474,14 @@ class Curriculum {
       context: 'Priya is asked about a meeting with a competitor.\n\n'
           'BASELINE: Priya blinks at a normal rate and holds comfortable eye contact throughout small talk.',
       moments: <String>[
-        'Describing her drive in → normal blinking, steady eye contact.',
-        'Asked if she met with Halvorsen Corp → rapid flutter-blinking, then her eyes close for a full second.',
-        'Talking about a project deadline → steady gaze, normal blinks.',
-        'Asked about her favorite restaurant → laughs, normal blinks.',
+        'Asked if she knows anyone at Halvorsen Corp → steady gaze: "A few people, from conferences."',
+        'Asked about her bonus → steady eye contact, normal blinks, calls it "honestly disappointing."',
+        'Asked if she met them last month → holds eye contact, but blinks in a quick burst of five.',
+        'Asked where she had lunch that day → steady eye contact, names a café across the street.',
       ],
-      answer: 1,
-      insight: 'Eye blocking. Closing or shielding the eyes, and surges in blink rate, commonly follow information we '
-          'dislike: the brain trying to "not see" a threat. Timed to a specific question, it marks the topic for '
-          'follow-up.',
+      answer: 2,
+      insight: 'A sudden burst of blinks is a classic eye-behavior shift; blink rate often surges with stress or '
+          'heavy thinking. Knowing people at the competitor or resenting a bonus are motives, not behavior changes.',
     ),
     Challenge.baseline(
       id: 'b5',
@@ -466,14 +489,15 @@ class Curriculum {
       context: 'Tom is interviewed about a skipped safety inspection.\n\n'
           'BASELINE: Tom leans forward, torso open, both feet pointed at the interviewer.',
       moments: <String>[
-        'Asked about his training → leans in, feet toward the interviewer.',
-        'Asked about coworkers → leans in, relaxed, smiles.',
-        'Asked if he signed the inspection form → leans back, crosses his arms, both feet rotate toward the door.',
-        'Asked about his schedule → open torso, leaning forward.',
+        'Asked if he skipped the inspection → leans in and frowns: "Absolutely not. Ask anyone."',
+        'Asked who signed the form → stays leaning in, but both feet slide to point at the door.',
+        'Asked about the accident report → leans in, open torso, names the injured worker.',
+        'Asked about his safety training → feet forward, open torso, says he "mostly" remembers it.',
       ],
-      answer: 2,
-      insight: 'Ventral denial and foot orientation. We turn our torso and feet away from what we want to escape. The '
-          'feet are often the most honest part of the body because we rarely think to control them.',
+      answer: 1,
+      insight: 'Foot orientation. We point our feet toward where we want to go. The upper body stayed engaged, '
+          'but the feet turned toward the exit. Feet are often the most honest part of the body because we rarely '
+          'think to control them.',
     ),
     // High Cognitive Load · Level 1
     Challenge.baseline(
@@ -484,14 +508,14 @@ class Curriculum {
           'BASELINE: Elena naturally talks fast, high-pitched, and laughs constantly, even about serious subjects. '
           'She jokes through the entire warm-up.',
       moments: <String>[
-        'Describing the team offsite → rapid-fire and giggling: "Oh it was chaos. Total chaos!"',
-        'Asked about her expense report → fast and high: "Submitted it Monday, like always!" Then laughs.',
-        'Asked whether anyone else knows her password → speech slows to measured, low, deliberate words. No laugh.',
-        'Asked about her manager → quick eye-roll, fast talk, big laugh.',
+        'Asked about the login → rapid and high, laughing: "Wasn\'t me, I can barely use email!"',
+        'Asked if anyone knows her password → still quick, a beat lower, and no laugh this time.',
+        'Asked about her manager → fast, high, an eye-roll and a laugh: "She\'s a nightmare."',
+        'Asked if she was online at 2 AM → fast and giggling: "At 2 AM? I\'m always asleep by then!"',
       ],
-      answer: 2,
-      insight: 'For a fast, high-pitched, joking baseline, the anomaly runs the other way: slowing down, lowering the '
-          'voice and losing the laugh. Measured speech can signal careful editing. Only the deviation counts.',
+      answer: 1,
+      insight: 'For a fast, high, joking baseline, the anomaly runs the other way: a lower voice and a missing laugh. '
+          'Repeating the question ("At 2 AM?") is a verbal stall worth noting, but her delivery stayed on baseline.',
     ),
     Challenge.baseline(
       id: 'b7',
@@ -501,14 +525,15 @@ class Curriculum {
           'BASELINE: Kenji naturally avoids eye contact. He looks down while thinking and pushes his glasses up every '
           'few sentences. Quiet but cooperative.',
       moments: <String>[
-        'Explaining his role → looks down at the table, pushes up his glasses.',
-        'Asked when he last ran a backup → glances away, pauses, adjusts his glasses.',
-        'Asked if he ran the delete command → locks into unbroken eye contact for the whole answer and never touches his glasses.',
-        'Describing his team → eyes down, soft voice, small smile.',
+        'Asked if he ran the delete command → eyes on the table, pushes up his glasses: "No."',
+        'Asked about the backup schedule → glances away, pauses a long time, adjusts his glasses.',
+        'Asked who has admin access → looks up and holds her gaze the whole time he lists names.',
+        'Asked about the deleted logs → stares at his hands, then pushes his glasses up twice.',
       ],
       answer: 2,
-      insight: 'Overcompensation. People who believe the myth that "liars look away" may hold unnaturally steady eye '
-          'contact while lying. For someone whose baseline is low eye contact, a sudden stare is the anomaly.',
+      insight: 'Overcompensation. People who believe "liars look away" may hold unnaturally steady eye contact. '
+          'For someone whose baseline is looking down, a sudden held gaze is the anomaly, even on a question that '
+          'sounds harmless.',
     ),
     Challenge.baseline(
       id: 'b8',
@@ -518,14 +543,14 @@ class Curriculum {
           'BASELINE: Sofia rocks gently in her chair, twirls her necklace and shifts position every minute or so. '
           'Restless, but relaxed.',
       moments: <String>[
-        'Talking about her commute → rocks gently, twirling her necklace.',
-        'Asked about her sales numbers → shifts in her seat, necklace in hand.',
-        'Asked who she met on Thursday afternoon → rocking stops dead; she goes rigid and her lips press into a thin line.',
-        'Describing her dog → laughs, rocks, adjusts how she is sitting.',
+        'Asked who she met Thursday → rocks gently, twirling her necklace: "Just a client lunch."',
+        'Asked why it isn\'t on the calendar → shifts in her seat: "I forgot to add it, honestly."',
+        'Asked for the client\'s name → answers calmly, hands in her lap, perfectly still.',
+        'Asked about her sales numbers → rocks, laughs, changes position twice while answering.',
       ],
       answer: 2,
-      insight: 'The freeze response. When a restless person suddenly locks still, the limbic system may be "freezing" '
-          'to avoid detection, the same reflex prey animals use. Paired with lip compression, it marks a strong hot spot.',
+      insight: 'The freeze response. When a restless person suddenly goes still, the body may be "freezing" to avoid '
+          'detection. Calm stillness looks innocent, which is exactly why it\'s easy to miss.',
     ),
     Challenge.baseline(
       id: 'b9',
@@ -535,14 +560,14 @@ class Curriculum {
           'BASELINE: Victor is loud and confident. He sits wide, arms spread across both armrests, points while he '
           'talks and laughs loudly.',
       moments: <String>[
-        'Talking about his golf game → booming laugh, arms spread wide.',
-        'Asked about the vendor → points at the interviewer: "They\'re the problem, not me."',
-        'Asked if he approved the second payment → tugs his collar away from his neck and exhales through puffed cheeks before a confident "Nope."',
-        'Describing the company party → leans back, arms wide, grinning.',
+        'Asked about the duplicate payment → points at her, booming: "Ask accounting, not me!"',
+        'Asked if he approved it → arms wide, a loud laugh, then a quick tug at his collar.',
+        'Asked about the vendor → leans back, arms spread, loudly calls them "total amateurs."',
+        'Asked if he would take a polygraph → laughs loudly, arms wide: "Bring it. Any day."',
       ],
-      answer: 2,
-      insight: 'Collar ventilation and cheek puffing are pacifiers that release built-up stress. The confident "Nope" '
-          'comes after: the body leaked before the mouth took control. Confident words don\'t cancel a stressed body.',
+      answer: 1,
+      insight: 'Collar ventilation is a pacifier that releases built-up stress, and Victor never does it at baseline. '
+          'Blame-shifting and bravado sound guilty, but they are how Victor always talks.',
     ),
 
     // ── LEVEL 2 · MICRO-EXPRESSIONS & ASYMMETRY ────────────────────────────
@@ -689,12 +714,12 @@ class Curriculum {
       profile: 'Marco, a college applicant, is asked whether he wrote his admission essay himself. In the warm-up '
           'he tapped his foot constantly and chatted easily.',
       indicators: <String>[
-        'Keeps tapping his foot',
+        'Keeps tapping his foot, just as he did in the warm-up',
         'Covers his mouth with his hand while answering',
-        'Wears glasses',
+        'Is wearing a borrowed suit that\'s slightly too big',
         'Leans his whole torso away from the interviewer',
         'Clears his throat repeatedly, only on this topic',
-        'Makes eye contact while answering',
+        'Holds eye contact steadily while he answers',
       ],
       answers: <int>{1, 3, 4},
       insight: 'Mouth covering (blocking the words), torso distancing and topic-linked throat clearing form the '
@@ -785,11 +810,11 @@ class Curriculum {
           'as she answers.',
       indicators: <String>[
         'Her smile drops, then snaps back',
-        'Audio lags during her answer',
+        'Her audio lags for a second mid-answer',
         'Shoulders rise toward her ears',
-        'Glances down at her notes',
+        'She glances down at her notes again',
         'Touches her nose and upper lip',
-        'Wears headphones',
+        'She is wearing a headset microphone',
       ],
       answers: <int>{0, 2, 4},
       insight: 'The faltering smile is a masked reaction breaking through, raised shoulders ("turtling") signal a wish '
@@ -822,55 +847,56 @@ class Curriculum {
       flag: Flag.pronounDrop,
       question: 'Tell me what you did after work on Tuesday.',
       sentences: <String>[
-        'I left the office at 5:30 and drove straight home.',
-        'Made dinner, checked some email, went to bed early.',
-        'I didn\'t talk to anyone else that night.',
+        'Left the office around 5:30 and took the long way home.',
+        'I made pasta for dinner and watched half a movie with my roommate.',
+        'I went to bed early because I had a 7 AM meeting the next day.',
       ],
-      answer: 1,
-      insight: 'Pronoun drop. The "I" disappears from sentence 2. In truthful accounts people usually own their actions '
-          'with "I". Dropping it can signal the speaker distancing themselves from those actions. Probe exactly what '
-          'happened during that sentence.',
+      answer: 0,
+      insight: 'Pronoun drop. Sentence 1 has no "I": nobody owns leaving the office or the drive. In truthful '
+          'accounts people usually own their actions. Here the speaker commits fully to the evening at home but not '
+          'to the drive, so that\'s the stretch to probe ("Why the long way? Where did you stop?").',
     ),
     Challenge.statement(
       id: 's2',
       flag: Flag.temporalGap,
       question: 'Walk me through Saturday morning.',
       sentences: <String>[
-        'I woke up around seven and fed the dog.',
-        'I took a shower and got dressed.',
-        'After that, I went to the hardware store around noon.',
+        'I woke up around seven, fed the dog and took him out for a short walk.',
+        'After that, I drove over to the hardware store for some paint.',
+        'I got there right when they opened at eleven and grabbed two gallons.',
       ],
-      answer: 2,
-      insight: 'Temporal gap. "After that" skips from about 7:30 to noon: four hours vanish in two words. Phrases like '
-          '"after that", "later on" and "the next thing I knew" can mark withheld information. Ask what happened in the gap.',
+      answer: 1,
+      insight: 'Temporal gap. The walk ends around 7:30, but they reach the store at eleven: about three hours vanish '
+          'behind "After that". Phrases like "after that", "later on" and "the next thing I knew" can mark '
+          'withheld information. Ask what happened in between.',
     ),
     Challenge.statement(
       id: 's3',
       flag: Flag.tenseShift,
       question: 'What happened when you got to the parking garage?',
       sentences: <String>[
-        'I walked to my car on level two.',
-        'I unlocked the door and put my bag inside.',
-        'Then this guy comes up behind me and grabs my arm.',
+        'I parked on level two because the lower levels were completely full.',
+        'I\'m walking back to my car and a guy grabs my bag from behind.',
+        'I yelled for help and he ran off toward the stairwell with it.',
       ],
-      answer: 2,
-      insight: 'Verb tense shift. The account moves from past tense ("walked", "unlocked") to present ("comes", '
-          '"grabs") at the critical moment. Memories are recalled in the past tense; a switch to present can mean the '
-          'speaker is constructing rather than remembering. It\'s a flag to probe, not proof.',
+      answer: 1,
+      insight: 'Verb tense shift. "Parked" and "yelled" are past tense, but the key moment ("I\'m walking", '
+          '"grabs") is told in the present. Memories are usually recalled in the past tense; a switch at the critical '
+          'moment can mean the speaker is constructing rather than remembering. A flag to probe, not proof.',
     ),
     Challenge.statement(
       id: 's4',
       flag: Flag.nonAnswer,
       question: 'Did you take the money from the register?',
       sentences: <String>[
-        'I opened the register at nine, like always.',
-        'I counted the drawer at close and logged the total.',
-        'I\'m an honest person. I would never do something like that.',
+        'Look, I\'ve worked here six years and never had a single complaint.',
+        'I opened the drawer at nine and counted it with Maria, like always.',
+        'At close I counted it again, logged the total and locked the safe.',
       ],
-      answer: 2,
-      insight: 'Non-answer assertion. The direct question never gets "No, I didn\'t take the money." It gets a '
-          'character reference and a hypothetical ("would never"). Truthful denials tend to be short, specific, '
-          'past-tense and on topic.',
+      answer: 0,
+      insight: 'Non-answer assertion. The question was yes or no, and the only sentence aimed at it is a character '
+          'reference ("six years, no complaints"). "No, I didn\'t take it" never appears. Truthful denials tend to '
+          'be short, direct and on topic.',
     ),
     Challenge.statement(
       id: 's5',
@@ -922,16 +948,16 @@ class Curriculum {
       highLoad: true,
       question: 'What did you do between leaving the bar and getting home?',
       sentences: <String>[
-        'I said goodbye to Mike and Tasha out front. They were heading to get pizza.',
-        'I\'d had two beers, maybe, over like three hours, so I was totally fine.',
-        'I walked to my car, which was on Elm because the lot was full.',
+        'I said goodbye to Mike and Tasha out front. They were heading for pizza.',
+        'I walked to my car, which was on Elm because the lot was totally full.',
         'Eventually I got home and went straight to bed.',
+        'I\'d only had two beers, maybe, over like three hours, so I was fine.',
         'My roommate can tell you I was home by midnight.',
       ],
-      answer: 3,
-      insight: 'The question asked about exactly one window, the drive home, and "Eventually" compresses it into a '
-          'single word. Sentence 2 over-justifies and sentence 5 borrows a witness, but those are decoys: the structural '
-          'gap is in sentence 4.',
+      answer: 2,
+      insight: 'The question asked about exactly one window, the drive home, and "Eventually" squeezes it into one '
+          'word. Sentence 4 over-justifies and sentence 5 borrows a witness; both are worth noting, but they are '
+          'decoys. The structural gap is in sentence 3.',
     ),
     Challenge.statement(
       id: 's9',
@@ -939,15 +965,15 @@ class Curriculum {
       highLoad: true,
       question: 'Describe what you did when you opened the store this morning.',
       sentences: <String>[
-        'I got in at 6:45, which is early for me, but we had a delivery coming.',
-        'I turned off the alarm, flipped on the lights and started the coffee machine.',
+        'I got in at 6:45, which is early for me, but we had a big delivery coming.',
+        'Turned off the alarm, then moved some boxes in the back room.',
         'I counted the safe, which I do every morning, and it was all there.',
-        'Then went to the back, moved some boxes around, came back out front.',
-        'I opened the doors at seven on the dot.',
+        'I flipped on the lights out front and started the coffee machine.',
+        'I opened the doors at seven on the dot, same as every other day.',
       ],
-      answer: 3,
-      insight: 'Every sentence owns its actions with "I" except the trip to the back room. A pronoun drop inside an '
-          'otherwise committed story pinpoints the part the speaker is least willing to own.',
+      answer: 1,
+      insight: 'Every sentence owns its actions with "I" except the alarm and the back room. A pronoun drop inside '
+          'an otherwise committed story pinpoints the part the speaker is least willing to own.',
     ),
     Challenge.statement(
       id: 's10',
@@ -956,15 +982,15 @@ class Curriculum {
       question: 'Did you send the pricing email to the competitor?',
       sentences: <String>[
         'I saw that thread on Monday. The subject line was Q3 pricing.',
-        'I forwarded it to my manager because she asked me for it.',
-        'I replied to Karen in accounting about the invoice numbers.',
-        'Honestly, I\'m just not the kind of person who would sell out my team.',
+        'Honestly, I\'m just not the kind of person who\'d sell out my team.',
+        'I forwarded it to my manager because she asked me for it that morning.',
+        'I replied to Karen in accounting about the invoice numbers after lunch.',
         'I logged off around six and went to my kid\'s soccer game.',
       ],
-      answer: 3,
-      insight: 'Every other sentence is a concrete, checkable action, which makes the answer feel cooperative. But the '
-          'only sentence that touches the actual question is a character assertion. "I did not send it" never appears. '
-          'Words like "honestly" often prop up a claim the speaker doesn\'t trust to stand alone.',
+      answer: 1,
+      insight: 'Every other sentence is a concrete, checkable action, which makes the answer feel cooperative. But '
+          'the only sentence that touches the actual question is a character assertion; "I did not send it" never '
+          'appears. Words like "honestly" often prop up a claim the speaker doesn\'t trust to stand alone.',
     ),
   ];
 }
@@ -1211,7 +1237,7 @@ class QuestSession {
   double get accuracy => answers == 0 ? 0 : correctAnswers / answers;
   int get totalIp => answerIp + bonusIp;
 
-  void registerAnswer(QuestItem item, {required bool correct, required int gain}) {
+  void registerAnswer(QuestItem item, {required bool correct, required int gain, required math.Random rng}) {
     answers++;
     answerIp += gain;
     if (correct) {
@@ -1219,7 +1245,7 @@ class QuestSession {
       cleared++;
     } else {
       // Missed challenges repeat at the end of the loop.
-      queue.add(QuestItem(item.challenge, isRetry: true));
+      queue.add(QuestItem(item.challenge.shuffled(rng), isRetry: true));
     }
   }
 
@@ -1240,7 +1266,7 @@ class QuestSession {
     final pick = pool[rng.nextInt(pool.length)];
 
     usedIds.add(pick.id);
-    queue[position] = QuestItem(pick);
+    queue[position] = QuestItem(pick.shuffled(rng));
     highLoadServed++;
     return true;
   }
@@ -1255,7 +1281,7 @@ class QuestBuilder {
       final pool = Curriculum.challenges.where((c) => !c.highLoad && c.level == node.level).toList()..shuffle(rng);
       return QuestSession(
         nodeIndex: nodeIndex,
-        items: pool.take(node.questLength).map((c) => QuestItem(c)).toList(),
+        items: pool.take(node.questLength).map((c) => QuestItem(c.shuffled(rng))).toList(),
       );
     }
 
@@ -1281,7 +1307,7 @@ class QuestBuilder {
 
     return QuestSession(
       nodeIndex: nodeIndex,
-      items: picks.map((c) => QuestItem(c)).toList(),
+      items: picks.map((c) => QuestItem(c.shuffled(rng))).toList(),
       calibratedFlag: focus,
     );
   }
@@ -2384,7 +2410,7 @@ class _QuestScreenState extends State<QuestScreen> with SingleTickerProviderStat
     final item = _session.current;
     final correct = setEquals(_selection, item.challenge.correct);
     final gain = game.recordAnswer(item.challenge, correct: correct, isRetry: item.isRetry);
-    _session.registerAnswer(item, correct: correct, gain: gain);
+    _session.registerAnswer(item, correct: correct, gain: gain, rng: _rng);
     if (correct) {
       HapticFeedback.mediumImpact();
     } else {
