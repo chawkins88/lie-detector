@@ -1,11 +1,11 @@
 // ════════════════════════════════════════════════════════════════════════════
-//  MindHunter Academy
+//  Cold Reading
 //  A Duolingo-style trainer for reading people, spotting deception and
 //  mastering statement analysis.
 //
 //  • Single file, no third-party packages, no network, all state in memory.
-//  • Run:  flutter create mindhunter_academy
-//          replace mindhunter_academy/lib/main.dart with this file
+//  • Run:  flutter create cold_reading
+//          replace cold_reading/lib/main.dart with this file
 //          flutter run
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -19,7 +19,7 @@ import 'package:flutter/services.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const MindHunterApp());
+  runApp(const ColdReadingApp());
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -571,7 +571,7 @@ class Curriculum {
     SkillNode(
       id: 'exam',
       level: 8,
-      title: 'MindHunter Exam',
+      title: 'Master Exam',
       description: 'The final adaptive exam across all eight levels, calibrated to your profile.',
       icon: Icons.emoji_events,
       isReview: true,
@@ -2451,14 +2451,14 @@ class QuestBuilder {
 //  APP ROOT
 // ════════════════════════════════════════════════════════════════════════════
 
-class MindHunterApp extends StatefulWidget {
-  const MindHunterApp({super.key});
+class ColdReadingApp extends StatefulWidget {
+  const ColdReadingApp({super.key});
 
   @override
-  State<MindHunterApp> createState() => _MindHunterAppState();
+  State<ColdReadingApp> createState() => _ColdReadingAppState();
 }
 
-class _MindHunterAppState extends State<MindHunterApp> {
+class _ColdReadingAppState extends State<ColdReadingApp> {
   final GameState _game = GameState();
 
   @override
@@ -2470,7 +2470,7 @@ class _MindHunterAppState extends State<MindHunterApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'MindHunter Academy',
+      title: 'Cold Reading',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -2685,7 +2685,7 @@ class _MindTreeScreenState extends State<MindTreeScreen> {
       padding: const EdgeInsets.only(top: 28),
       child: Text(
         allDone
-            ? '🎓 Certified MindHunter.\nReplay any node to keep your edge sharp.'
+            ? '🎓 Certified Cold Reader.\nReplay any node to keep your edge sharp.'
             : 'Climb the tree to unlock the Master Class.',
         textAlign: TextAlign.center,
         style: const TextStyle(color: Palette.textMuted, fontSize: 14, height: 1.4),
@@ -2726,7 +2726,7 @@ class _HeroTitle extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Text(
-          'MindHunter Academy',
+          'Cold Reading',
           style: TextStyle(color: Palette.textPrimary, fontSize: 26, fontWeight: FontWeight.w900),
         ),
         SizedBox(height: 4),

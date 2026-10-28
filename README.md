@@ -1,4 +1,4 @@
-# MindHunter Academy
+# Cold Reading
 
 A Duolingo-style Flutter app that teaches baseline reading, micro-expressions,
 behavioral clusters and statement analysis. Everything lives in
@@ -9,9 +9,9 @@ behavioral clusters and statement analysis. Everything lives in
 Every push to `main` builds an APK on GitHub Actions.
 
 1. On the phone, sign in to GitHub in the browser and open this repo's **Actions** tab.
-2. Open the latest green **Build MindHunter APK** run.
-3. Under **Artifacts**, tap **MindHunterAcademy-apk** to download the .zip.
-4. Open the .zip in Files, tap `MindHunterAcademy.apk`, and allow "Install unknown apps" when asked.
+2. Open the latest green **Build Cold Reading APK** run.
+3. Under **Artifacts**, tap **ColdReading-apk** to download the .zip.
+4. Open the .zip in Files, tap `ColdReading.apk`, and allow "Install unknown apps" when asked.
 
 Every build is signed with the same key (`signing/app.keystore`), so new versions install
 over old ones. It's a personal sideloading key, not a Play Store key.

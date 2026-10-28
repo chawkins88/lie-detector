@@ -1,4 +1,4 @@
-name: mindhunter_academy
+name: cold_reading
 description: Duolingo-style trainer for reading people, spotting deception and statement analysis.
 publish_to: 'none'
 version: 1.0.0+1

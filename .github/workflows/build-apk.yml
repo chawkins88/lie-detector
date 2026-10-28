@@ -1,4 +1,4 @@
-name: Build MindHunter APK
+name: Build Cold Reading APK
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: mindhunter-apk-${{ github.ref }}
+  group: cold-reading-apk-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -30,10 +30,10 @@ jobs:
 
       - name: Generate Android project files
         run: |
-          flutter create --platforms=android --org com.mindhunter --project-name mindhunter_academy .
+          flutter create --platforms=android --org com.coldreading --project-name cold_reading .
           # Drop template files that don't apply to this app.
           rm -f test/widget_test.dart analysis_options.yaml
-          sed -i 's/android:label="[^"]*"/android:label="MindHunter Academy"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:label="[^"]*"/android:label="Cold Reading"/' android/app/src/main/AndroidManifest.xml
 
       - name: Sign every build with the same key
         # A fixed key lets new versions install over old ones on the phone.
@@ -89,13 +89,41 @@ jobs:
       - name: Build release APK
         run: |
           flutter build apk --release
-          cp build/app/outputs/flutter-apk/app-release.apk MindHunterAcademy.apk
+          cp build/app/outputs/flutter-apk/app-release.apk ColdReading.apk
           # Fail the build if the APK isn't signed with the fixed key.
           APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
-          "$APKSIGNER" verify --print-certs MindHunterAcademy.apk | grep -q "CN=MindHunter Academy"
+          "$APKSIGNER" verify --print-certs ColdReading.apk | grep -q "CN=MindHunter Academy"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MindHunterAcademy-apk
-          path: MindHunterAcademy.apk
+          name: ColdReading-apk
+          path: ColdReading.apk
           retention-days: 30
+
+  install-test:
+    # Proves the APK installs and launches on a real Android system image.
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ColdReading-apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install and launch on an Android 14 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb install -r ColdReading.apk
+            adb shell monkey -p com.coldreading.cold_reading -c android.intent.category.LAUNCHER 1
+            sleep 8
+            adb shell pidof com.coldreading.cold_reading

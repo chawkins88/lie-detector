@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mindhunter_academy/main.dart';
+import 'package:cold_reading/main.dart';
 
 /// Guards against answer choices that give the answer away.
 void main() {
