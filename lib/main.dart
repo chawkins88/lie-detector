@@ -43,6 +43,10 @@ class Palette {
   static const Color orange = Color(0xFFFF9600);
   static const Color gold = Color(0xFFFFC800);
   static const Color highlight = Color(0xFFFFE066);
+  static const Color pink = Color(0xFFFF86D0);
+  static const Color teal = Color(0xFF00CD9C);
+  static const Color indigo = Color(0xFF8C9EFF);
+  static const Color lime = Color(0xFFA5D63A);
 
   static const Color locked = Color(0xFF3B4A52);
   static const Color lockedIcon = Color(0xFF6F8591);
@@ -83,7 +87,8 @@ enum ChallengeType {
   baseline('Baseline Anomaly', Icons.timeline),
   microExpression('Micro-Expression Flash', Icons.face),
   cluster('Cluster Builder', Icons.hub),
-  statement('Statement Analysis', Icons.format_quote);
+  statement('Statement Analysis', Icons.format_quote),
+  scenario('Investigator Decision', Icons.policy);
 
   const ChallengeType(this.label, this.icon);
   final String label;
@@ -109,7 +114,17 @@ enum Flag {
   pronounDrop('Pronoun Drop', ChallengeType.statement),
   temporalGap('Temporal Gap', ChallengeType.statement),
   tenseShift('Verb Tense Shift', ChallengeType.statement),
-  nonAnswer('Non-Answer Assertion', ChallengeType.statement);
+  nonAnswer('Non-Answer Assertion', ChallengeType.statement),
+  happiness('Genuine Happiness', ChallengeType.microExpression),
+  qualifier('Credibility Qualifier', ChallengeType.statement),
+  distancing('Distancing Language', ChallengeType.statement),
+  minimizing('Minimizing Language', ChallengeType.statement),
+  stalling('Stalling Tactic', ChallengeType.statement),
+  truthMarkers('Truthful Account Markers', ChallengeType.cluster),
+  openQuestion('Question Design', ChallengeType.scenario),
+  probeHotSpot('Probing Hot Spots', ChallengeType.scenario),
+  contamination('Avoiding Contamination', ChallengeType.scenario),
+  rapport('Rapport & Pressure', ChallengeType.scenario);
 
   const Flag(this.label, this.family);
   final String label;
@@ -184,13 +199,16 @@ class Challenge {
     required Set<int> answers,
     required String insight,
     bool highLoad = false,
+    int level = 3,
+    Flag flag = Flag.clusterBuilding,
+    String prompt = 'Tap exactly 3 genuine stress indicators to build the cluster.',
   }) =>
       Challenge(
         id: id,
-        level: 3,
+        level: level,
         type: ChallengeType.cluster,
-        flag: Flag.clusterBuilding,
-        prompt: 'Tap exactly 3 genuine stress indicators to build the cluster.',
+        flag: flag,
+        prompt: prompt,
         context: profile,
         options: indicators,
         correct: answers,
@@ -207,15 +225,40 @@ class Challenge {
     required int answer,
     required String insight,
     bool highLoad = false,
+    int level = 4,
+    String prompt = 'Tap the sentence with the structural flaw.',
   }) =>
       Challenge(
         id: id,
-        level: 4,
+        level: level,
         type: ChallengeType.statement,
         flag: flag,
-        prompt: 'Tap the sentence with the structural flaw.',
+        prompt: prompt,
         context: question,
         options: sentences,
+        correct: <int>{answer},
+        insight: insight,
+        highLoad: highLoad,
+      );
+
+  /// Level 7 — choose the best investigative move.
+  factory Challenge.scenario({
+    required String id,
+    required Flag flag,
+    required String context,
+    required List<String> moves,
+    required int answer,
+    required String insight,
+    bool highLoad = false,
+  }) =>
+      Challenge(
+        id: id,
+        level: 7,
+        type: ChallengeType.scenario,
+        flag: flag,
+        prompt: 'What\'s your best next move?',
+        context: context,
+        options: moves,
         correct: <int>{answer},
         insight: insight,
         highLoad: highLoad,
@@ -248,6 +291,7 @@ class Challenge {
           ChallengeType.cluster => '• ${options[i]}',
           ChallengeType.baseline => 'Moment ${String.fromCharCode(65 + i)}: ${options[i]}',
           ChallengeType.microExpression => options[i],
+          ChallengeType.scenario => options[i],
         });
     return lines.join('\n');
   }
@@ -276,11 +320,12 @@ class Challenge {
 }
 
 class LevelInfo {
-  const LevelInfo(this.number, this.title, this.subtitle, this.color);
+  const LevelInfo(this.number, this.title, this.subtitle, this.color, this.type);
   final int number;
   final String title;
   final String subtitle;
   final Color color;
+  final ChallengeType type;
 }
 
 class SkillNode {
@@ -316,10 +361,18 @@ class Curriculum {
   Curriculum._();
 
   static const List<LevelInfo> levels = <LevelInfo>[
-    LevelInfo(1, 'The Baseline', 'Intro to the grammar of behavior', Palette.green),
-    LevelInfo(2, 'Micro-Expressions & Asymmetry', 'Catch emotion leaking in under a second', Palette.blue),
-    LevelInfo(3, 'Cluster Decoding', 'Build behavioral sentences, not single words', Palette.purple),
-    LevelInfo(4, 'Statement Analysis', 'The Master Class: the structure of a lie', Palette.orange),
+    LevelInfo(1, 'The Baseline', 'Intro to the grammar of behavior', Palette.green, ChallengeType.baseline),
+    LevelInfo(2, 'Micro-Expressions & Asymmetry', 'Catch emotion leaking in under a second', Palette.blue,
+        ChallengeType.microExpression),
+    LevelInfo(3, 'Cluster Decoding', 'Build behavioral sentences, not single words', Palette.purple,
+        ChallengeType.cluster),
+    LevelInfo(4, 'Statement Analysis', 'The Master Class: the structure of a lie', Palette.orange,
+        ChallengeType.statement),
+    LevelInfo(5, 'Verbal Tells', 'Qualifiers, distancing, minimizing and stalling', Palette.pink,
+        ChallengeType.statement),
+    LevelInfo(6, 'Truth Signals', 'Recognize what real memories sound like', Palette.teal, ChallengeType.cluster),
+    LevelInfo(7, 'Interview Tactics', 'Ask the question that gets the truth', Palette.indigo, ChallengeType.scenario),
+    LevelInfo(8, 'Digital Deception', 'Texts, emails, reviews and DMs', Palette.lime, ChallengeType.statement),
   ];
 
   static LevelInfo level(int number) => levels[number - 1];
@@ -406,13 +459,105 @@ class Curriculum {
       icon: Icons.gavel,
     ),
     SkillNode(
-      id: 'exam',
+      id: 'r4',
       level: 4,
-      title: 'MindHunter Exam',
-      description: 'The final adaptive exam across all four levels, calibrated to your profile.',
-      icon: Icons.emoji_events,
+      title: 'Statement Review',
+      description: 'Levels 1–4 mixed, weighted toward the flags you misread most.',
+      icon: Icons.fitness_center,
       isReview: true,
       questLength: 5,
+    ),
+    SkillNode(
+      id: 'l5a',
+      level: 5,
+      title: 'Qualifiers & Oaths',
+      description: '"To be honest", "I swear", "frankly": words that try to sound true.',
+      icon: Icons.campaign,
+    ),
+    SkillNode(
+      id: 'l5b',
+      level: 5,
+      title: 'Distance & Minimizing',
+      description: '"That woman", "just a little", and repeating the question back.',
+      icon: Icons.social_distance,
+    ),
+    SkillNode(
+      id: 'r5',
+      level: 5,
+      title: 'Verbal Review',
+      description: 'Levels 1–5 mixed, calibrated to your weak spots.',
+      icon: Icons.fitness_center,
+      isReview: true,
+      questLength: 5,
+    ),
+    SkillNode(
+      id: 'l6a',
+      level: 6,
+      title: 'Memory vs. Fiction',
+      description: 'Real memories are messy: corrections, gaps and odd details.',
+      icon: Icons.auto_stories,
+    ),
+    SkillNode(
+      id: 'l6b',
+      level: 6,
+      title: 'Truth Markers',
+      description: 'Separate what happened from credibility pitches.',
+      icon: Icons.verified,
+    ),
+    SkillNode(
+      id: 'r6',
+      level: 6,
+      title: 'Truth Review',
+      description: 'Levels 1–6 mixed, calibrated to your weak spots.',
+      icon: Icons.fitness_center,
+      isReview: true,
+      questLength: 5,
+    ),
+    SkillNode(
+      id: 'l7a',
+      level: 7,
+      title: 'Opening Moves',
+      description: 'Open questions, rapport and a clean baseline.',
+      icon: Icons.forum,
+    ),
+    SkillNode(
+      id: 'l7b',
+      level: 7,
+      title: 'Pressure & Probing',
+      description: 'Dig into hot spots without leaking what you know.',
+      icon: Icons.manage_search,
+    ),
+    SkillNode(
+      id: 'r7',
+      level: 7,
+      title: 'Tactics Review',
+      description: 'Levels 1–7 mixed, calibrated to your weak spots.',
+      icon: Icons.fitness_center,
+      isReview: true,
+      questLength: 5,
+    ),
+    SkillNode(
+      id: 'l8a',
+      level: 8,
+      title: 'Texts & Emails',
+      description: 'Spot the tells in written messages.',
+      icon: Icons.sms,
+    ),
+    SkillNode(
+      id: 'l8b',
+      level: 8,
+      title: 'Reviews & Profiles',
+      description: 'Fake reviews, slick DMs and polished excuses.',
+      icon: Icons.alternate_email,
+    ),
+    SkillNode(
+      id: 'exam',
+      level: 8,
+      title: 'MindHunter Exam',
+      description: 'The final adaptive exam across all eight levels, calibrated to your profile.',
+      icon: Icons.emoji_events,
+      isReview: true,
+      questLength: 6,
     ),
   ];
 
@@ -991,6 +1136,776 @@ class Curriculum {
       insight: 'Every other sentence is a concrete, checkable action, which makes the answer feel cooperative. But '
           'the only sentence that touches the actual question is a character assertion; "I did not send it" never '
           'appears. Words like "honestly" often prop up a claim the speaker doesn\'t trust to stand alone.',
+    ),
+
+    // ── ADDED COURSES & EXTRA PRACTICE ─────────────────────────────────────
+    Challenge.baseline(
+      id: 'b10',
+      flag: Flag.gestureShift,
+      context: 'Leo is asked about a dent in the company van.\n\nBASELINE: Leo talks with small, steady hand movements and nods along while he listens.',
+      moments: <String>[
+        'Asked where he parked → small hand gestures, nods: "Back lot, near the dumpsters."',
+        'Asked if he drove the van Friday → hands move steadily: "Twice, for supply runs."',
+        'Asked who was with him → small gestures, nods, names two coworkers without pausing.',
+        'Asked how the dent got there → shrugs one shoulder only, hands stay down.',
+      ],
+      answer: 3,
+      insight: 'A one-shoulder shrug is a classic sign someone doesn\'t fully believe what they\'re saying: the body only half-commits. It also replaced his usual steady gestures, so it breaks baseline twice.',
+    ),
+    Challenge.baseline(
+      id: 'b11',
+      flag: Flag.ocularShift,
+      context: 'Grace is asked about a missing tip jar at the café.\n\nBASELINE: Grace\'s eyes roam the room while she talks: the door, the counter, her phone.',
+      moments: <String>[
+        'Asked when her shift started → glances at the counter, then the door: "Around six."',
+        'Asked who emptied the jar last → checks her phone, looks around the room, answers.',
+        'Asked if she touched the jar → eyes lock on one spot on the table until she\'s done.',
+        'Asked about her coworker Jen → glances around the café: "She\'s great. Always on time."',
+      ],
+      answer: 2,
+      insight: 'Eyes that suddenly lock in place, in someone whose gaze normally roams, is a gaze freeze: effort going into controlling the answer. The same stare would be normal for a still, focused person.',
+    ),
+    Challenge.baseline(
+      id: 'b12',
+      flag: Flag.pacifying,
+      context: 'Nate is asked about a fight outside the gym.\n\nBASELINE: Nate sits back with his forearms on his legs. He doesn\'t touch his face at all during small talk.',
+      moments: <String>[
+        'Asked if he knows the other guy → forearms on his legs: "Seen him around. Never talked."',
+        'Asked where he was at 9 → sits back, arms resting: "Leg day. Ask the front desk."',
+        'Asked if he threw a punch → rubs his forehead with two fingers, then answers.',
+        'Asked about his bruised knuckles → arms on legs, calmly: "Punching bag. No gloves."',
+      ],
+      answer: 2,
+      insight: 'Forehead rubbing is a pacifier: the brain self-soothing under stress. The bruised knuckles sound damning, but evidence isn\'t behavior. His body stayed on baseline for that answer.',
+    ),
+    Challenge.micro(
+      id: 'm11',
+      flag: Flag.happiness,
+      card: 'Both lip corners rise evenly, the cheeks lift, and crow\'s-feet wrinkles appear at the outer corners of the eyes.',
+      emotions: <String>[
+        'Contempt',
+        'Happiness',
+        'Duping Delight',
+        'Surprise',
+      ],
+      answer: 1,
+      insight: 'The Duchenne smile: genuine happiness involves the muscle around the eyes, which is hard to fire on purpose. A smile that stops at the mouth is usually social or masking.',
+    ),
+    Challenge.micro(
+      id: 'm12',
+      flag: Flag.disgust,
+      card: 'When a coworker\'s name comes up, the upper lip curls up on BOTH sides and the nose crinkles for under half a second.',
+      emotions: <String>[
+        'Contempt',
+        'Anger',
+        'Disgust',
+        'Sadness',
+      ],
+      answer: 2,
+      insight: 'Disgust is two-sided: upper lip raised, nose wrinkled. Contempt is one-sided. A flash of disgust at a name tells you how the person really feels about them.',
+    ),
+    Challenge.micro(
+      id: 'm13',
+      flag: Flag.surprise,
+      card: 'The eyebrows lift in a smooth curve, the forehead wrinkles horizontally and the mouth falls open in a relaxed oval.',
+      emotions: <String>[
+        'Fear',
+        'Surprise',
+        'Happiness',
+        'Sadness',
+      ],
+      answer: 1,
+      insight: 'Surprise: curved raised brows and a relaxed, dropped jaw. If the brows were also pulled together and the lips stretched sideways, it would be fear.',
+    ),
+    Challenge.cluster(
+      id: 'c10',
+      profile: 'Rosa, a nurse, is asked about missing pain medication. She was chatty during small talk, clicks her pen constantly and tucks her hair behind her ear every few minutes.',
+      indicators: <String>[
+        'Clicks her pen while describing her rounds',
+        'Her voice drops almost to a whisper',
+        'Tucks her hair behind her ear again',
+        'She swallows hard before answering',
+        'She mentions she\'s worked nights for years',
+        'Her hands grip the edge of the table',
+      ],
+      answers: <int>{1, 3, 5},
+      insight: 'A voice drop, a hard swallow and white-knuckle gripping all appear at the key question. The pen and hair habits were there from the start, and her work history is just background.',
+    ),
+    Challenge.cluster(
+      id: 'c11',
+      profile: 'Derek, a landlord, is asked whether he entered a tenant\'s apartment without notice. He\'s soft-spoken and rubs his beard whenever he thinks.',
+      indicators: <String>[
+        'Rubs his beard while recalling dates',
+        'Blinks rapidly for several seconds',
+        'His neck flushes bright red',
+        'Speaks softly, as he has all along',
+        'Turns his chair a quarter-turn away',
+        'Owns four other rental buildings',
+      ],
+      answers: <int>{1, 2, 4},
+      insight: 'A blink surge, neck flushing (blood rushing under stress) and turning his body away form the cluster. Beard rubbing and soft speech are his baseline, and owning other buildings is just a fact.',
+    ),
+    Challenge.cluster(
+      id: 'c12',
+      profile: 'Tasha is asked if she copied answers during an online exam. Since sitting down she has bounced her knee constantly and sipped water every few minutes.',
+      indicators: <String>[
+        'Her knee keeps bouncing under the desk',
+        'Her lips press into a tight line',
+        'She takes another sip from her water bottle',
+        'She touches the side of her neck',
+        'She is wearing her school hoodie',
+        'She answers "Why would I cheat?" before denying',
+      ],
+      answers: <int>{1, 3, 5},
+      insight: 'Lip compression, neck touching and answering a question with a question cluster at the key moment. The knee bouncing and water sipping were constant from the start.',
+    ),
+    Challenge.statement(
+      id: 's11',
+      flag: Flag.pronounDrop,
+      question: 'Where were you when the fire alarm went off?',
+      sentences: <String>[
+        'I was in the break room heating up my lunch in the microwave.',
+        'I heard the alarm and I grabbed my jacket off the chair.',
+        'Went down the back stairs and out to the parking lot.',
+      ],
+      answer: 2,
+      insight: 'The speaker owns being in the break room and grabbing the jacket, but the route out has no "I". That\'s the stretch to ask about: which stairs, who did you see, how long did it take?',
+    ),
+    Challenge.statement(
+      id: 's12',
+      flag: Flag.nonAnswer,
+      question: 'Did you post that video of your coworker online?',
+      sentences: <String>[
+        'I was home all weekend with my kids, so my phone was barely on.',
+        'Why would I want to embarrass someone I work with?',
+        'I checked my email Sunday night and went to bed around ten.',
+      ],
+      answer: 1,
+      insight: 'A yes-or-no question answered with a rhetorical question is a non-answer: it invites you to argue about motive instead of hearing a denial. "No, I didn\'t post it" never appears.',
+    ),
+    Challenge.statement(
+      id: 's13',
+      flag: Flag.temporalGap,
+      question: 'What did you do after you closed the shop on Friday?',
+      sentences: <String>[
+        'I locked the front door at nine and set the alarm like I always do.',
+        'I counted the drawer, put the deposit bag in the safe and turned off the lights.',
+        'Next thing I knew, it was Saturday morning and my manager was calling.',
+      ],
+      answer: 2,
+      insight: '"Next thing I knew" jumps from closing time to the next morning and skips the whole night. Ask what happened right after the lights went off.',
+    ),
+    Challenge.statement(
+      id: 'v1',
+      flag: Flag.qualifier,
+      level: 5,
+      prompt: 'Tap the sentence with the verbal tell.',
+      question: 'Did you see who took the laptop?',
+      sentences: <String>[
+        'I was at my desk the whole afternoon, working on the budget report.',
+        'To be perfectly honest with you, I didn\'t see anybody near it.',
+        'Kim from marketing stopped by around three to ask about the meeting.',
+      ],
+      answer: 1,
+      insight: 'Credibility qualifiers ("to be honest", "frankly", "I swear") try to make a statement sound true instead of letting it stand alone. Truthful people usually assume they\'ll be believed. Notice where it lands: on the one sentence that answers the question.',
+    ),
+    Challenge.statement(
+      id: 'v2',
+      flag: Flag.distancing,
+      level: 5,
+      prompt: 'Tap the sentence with the verbal tell.',
+      question: 'What\'s your relationship with Ms. Carter?',
+      sentences: <String>[
+        'We were in the same department for about two years, on the same floor.',
+        'We went to a few team lunches together, mostly with other people.',
+        'I never had any kind of personal relationship with that woman.',
+      ],
+      answer: 2,
+      insight: 'Distancing language. Switching from a name to "that woman" or "that person" pushes the subject away psychologically. It often appears when someone wants to separate themselves from a person or an event.',
+    ),
+    Challenge.statement(
+      id: 'v3',
+      flag: Flag.minimizing,
+      level: 5,
+      prompt: 'Tap the sentence with the verbal tell.',
+      question: 'What happened with the company credit card?',
+      sentences: <String>[
+        'I just used it a couple of times for small personal stuff.',
+        'Finance flagged the charges during their monthly review last week.',
+        'I met with my manager on Tuesday and we went through the statement.',
+      ],
+      answer: 0,
+      insight: 'Minimizing language ("just", "a couple", "small") shrinks the act. It\'s common when people admit part of something and hope the rest stays small. Ask for exact numbers.',
+    ),
+    Challenge.statement(
+      id: 'v4',
+      flag: Flag.stalling,
+      level: 5,
+      prompt: 'Tap the sentence with the verbal tell.',
+      question: 'Were you at the warehouse on Sunday night?',
+      sentences: <String>[
+        'Was I at the warehouse Sunday night? Why would you ask me that?',
+        'I was at my mom\'s place across town for dinner until about ten.',
+        'My brother drove me home after, so you can check with him if you want.',
+      ],
+      answer: 0,
+      insight: 'Repeating the question back buys time to build an answer, and "Why would you ask?" tries to find out what you know. Neither is a denial.',
+    ),
+    Challenge.statement(
+      id: 'v5',
+      flag: Flag.qualifier,
+      level: 5,
+      prompt: 'Tap the sentence with the verbal tell.',
+      question: 'Did you leave the gate unlocked?',
+      sentences: <String>[
+        'I closed up the yard at six, same as every other weekday.',
+        'I walked the fence line and checked the padlock on the side gate.',
+        'I swear on my kids I locked the front gate behind me.',
+      ],
+      answer: 2,
+      insight: 'Oaths ("I swear on my kids", "God as my witness") are credibility boosters. Truthful speakers rarely need an oath to back a simple fact, and here it shows up only on the key claim.',
+    ),
+    Challenge.statement(
+      id: 'v6',
+      flag: Flag.distancing,
+      level: 5,
+      prompt: 'Tap the sentence with the verbal tell.',
+      question: 'Tell me about the argument with your brother.',
+      sentences: <String>[
+        'Danny and I have always fought about money, ever since we were kids.',
+        'That guy came over Saturday and started yelling about the loan.',
+        'Danny left after about twenty minutes and I haven\'t heard from him.',
+      ],
+      answer: 1,
+      insight: 'He calls his brother "Danny" twice but "that guy" at the moment of the argument. A switch to distancing language at one point in the story shows where the emotion, or the problem, is.',
+    ),
+    Challenge.statement(
+      id: 'v7',
+      flag: Flag.minimizing,
+      level: 5,
+      prompt: 'Tap the sentence with the verbal tell.',
+      highLoad: true,
+      question: 'How did the client data end up on your personal laptop?',
+      sentences: <String>[
+        'We were swamped that quarter, everyone was taking work home at night.',
+        'IT never told us there was a rule about personal devices, as far as I knew.',
+        'I was trying to finish the Hendricks report before the Monday deadline.',
+        'I only copied over a few files, nothing anyone would really care about.',
+        'As soon as I heard there was a problem I deleted everything myself.',
+      ],
+      answer: 3,
+      insight: '"Only", "a few" and "nothing anyone would care about" shrink the act. The excuses in sentences 1–3 and the self-cleanup in sentence 5 are worth noting, but the minimizing tell is in sentence 4. Ask: how many files, exactly?',
+    ),
+    Challenge.statement(
+      id: 'v8',
+      flag: Flag.stalling,
+      level: 5,
+      prompt: 'Tap the sentence with the verbal tell.',
+      highLoad: true,
+      question: 'Did you change the numbers in the inventory report?',
+      sentences: <String>[
+        'I\'ve been doing inventory for this store for almost four years now.',
+        'Every count goes through the scanner and then into the system automatically.',
+        'That\'s a good question, and I can see why it would look that way.',
+        'Sometimes the scanner double-counts boxes, and we fix those by hand.',
+        'Marcus and I usually do the corrections together on Monday mornings.',
+      ],
+      answer: 2,
+      insight: '"That\'s a good question" is a stall: it compliments the question while buying time, and it\'s followed by explanation instead of "No." Stalling phrases ("good question", "let me think", "what do you mean by changed?") show the question landed.',
+    ),
+    Challenge.statement(
+      id: 'v9',
+      flag: Flag.distancing,
+      level: 5,
+      prompt: 'Tap the sentence with the verbal tell.',
+      highLoad: true,
+      question: 'Walk me through the night your roommate\'s car was damaged.',
+      sentences: <String>[
+        'Jess and I got back from the movies around eleven and made some tea.',
+        'Jess went to bed first because she had an early shift the next morning.',
+        'I stayed up watching TV in the living room until probably one.',
+        'I heard a bang outside but figured it was just the neighbors again.',
+        'In the morning, the girl was screaming about her car in the driveway.',
+      ],
+      answer: 4,
+      insight: 'Jess is "Jess" all night until the damage is discovered, then becomes "the girl". Distancing at the moment of the incident is the tell, buried under four ordinary sentences. "Figured it was just the neighbors" also pre-explains the bang.',
+    ),
+    Challenge.statement(
+      id: 'v10',
+      flag: Flag.qualifier,
+      level: 5,
+      prompt: 'Tap the sentence with the verbal tell.',
+      highLoad: true,
+      question: 'Did you take money from the church collection?',
+      sentences: <String>[
+        'Frankly, I barely even handled the collection plates that day.',
+        'Pastor Jim asked me to help count after the eleven o\'clock service.',
+        'We counted it in the office with the door open, like we always do.',
+        'Linda wrote the totals on the deposit slip and sealed the envelope.',
+        'I went straight home after because my daughter had a recital at two.',
+      ],
+      answer: 0,
+      insight: '"Frankly" props up a claim that the rest of the statement undercuts: they helped count the money. Qualifiers often attach to the weakest claim. ("Barely" is minimizing too.)',
+    ),
+    Challenge.cluster(
+      id: 't1',
+      level: 6,
+      flag: Flag.truthMarkers,
+      prompt: 'Tap the 3 signs this account is likely truthful.',
+      profile: 'A witness describes a robbery at a corner store:\n\n"I was in line, um, no wait, I was by the chips when he came in. He had this weird yellow scarf, like a soccer scarf. I honestly don\'t remember his shoes at all. I swear to God I\'m telling you everything. It all happened in exactly the order I\'m saying. I\'m a very observant person."',
+      indicators: <String>[
+        'Corrects herself mid-sentence ("no wait")',
+        'Mentions an odd detail: the yellow soccer scarf',
+        'Admits she doesn\'t remember his shoes',
+        'Swears to God she\'s telling everything',
+        'Insists it happened in exactly that order',
+        'Says she is a very observant person',
+      ],
+      answers: <int>{0, 1, 2},
+      insight: 'Real memory is messy: people self-correct, admit gaps and include odd details that serve no purpose. Liars avoid "I don\'t remember" because it sounds weak, and they lean on oaths, perfect order and claims about their own reliability.',
+    ),
+    Challenge.cluster(
+      id: 't2',
+      level: 6,
+      flag: Flag.truthMarkers,
+      prompt: 'Tap the 3 signs this account is likely truthful.',
+      profile: 'Ben explains why he was late to a client meeting:\n\n"Traffic on 5th was a nightmare, a bus was stalled in the right lane. I remember being really annoyed, I was gripping the wheel. Actually, it might have been 6th, not 5th. I can\'t remember if I texted my boss before or after I parked. I\'m a very punctual person, and my record speaks for itself."',
+      indicators: <String>[
+        'Describes his annoyance and gripping the wheel',
+        'Calls the traffic "a nightmare"',
+        'Corrects the street name on his own',
+        'Stresses that he\'s a very punctual person',
+        'Admits he can\'t recall when he texted his boss',
+        'Says his record speaks for itself',
+      ],
+      answers: <int>{0, 2, 4},
+      insight: 'Memories of real events carry feelings and body sensations, and people correct themselves without being asked. Admitting a small gap is a strong truth marker. Pointing to character ("I\'m punctual", "my record speaks for itself") is about credibility, not about what happened.',
+    ),
+    Challenge.cluster(
+      id: 't3',
+      level: 6,
+      flag: Flag.truthMarkers,
+      prompt: 'Tap the 3 signs this account is likely truthful.',
+      profile: 'A teenager explains a dent in the family car:\n\n"I backed out slow, I was checking the mirror, and this cat ran behind me. I jammed the brakes and my phone flew off the seat. I think I hit the mailbox, but honestly I\'m not 100% sure, it was dark. I would never lie to you guys. You can trust me on this."',
+      indicators: <String>[
+        'Mentions his phone flying off the seat',
+        'Says he would never lie to his parents',
+        'Admits he isn\'t 100% sure what he hit',
+        'Asks his parents to trust him on this',
+        'Includes a cat darting behind the car',
+        'Stresses that he backed out slowly',
+      ],
+      answers: <int>{0, 2, 4},
+      insight: 'Unexpected complications (a cat, a phone flying off the seat) and admitted uncertainty are typical of real memories; fabricated stories tend to be clean. "I would never lie" and "trust me" add nothing about the event, and stressing he drove slowly is self-serving.',
+    ),
+    Challenge.cluster(
+      id: 't4',
+      level: 6,
+      flag: Flag.truthMarkers,
+      prompt: 'Tap the 3 signs this account is likely truthful.',
+      profile: 'A coworker describes finding the server room door open:\n\n"I came in at 7:40, early because of the audit. The door was propped open with a fire extinguisher, which was weird, and the room smelled like burnt coffee. I don\'t know who was in there. I called Raj, wait, no, I texted him first, then called. To be clear, I followed every single protocol perfectly."',
+      indicators: <String>[
+        'Notes the odd smell of burnt coffee',
+        'Says she followed every protocol perfectly',
+        'Self-corrects: texted Raj before calling',
+        'Explains why she came in early',
+        'Says "to be clear" before her claim',
+        'Mentions the fire extinguisher propping the door',
+      ],
+      answers: <int>{0, 2, 5},
+      insight: 'Sensory details (the smell), unusual details (the fire extinguisher) and spontaneous self-correction are truth markers. "To be clear" plus "every single protocol perfectly" is a credibility pitch. Explaining why she was early is normal context either way.',
+    ),
+    Challenge.cluster(
+      id: 't5',
+      level: 6,
+      flag: Flag.truthMarkers,
+      prompt: 'Tap the 3 signs this account is likely truthful.',
+      profile: 'A man describes being mugged:\n\n"He came from the left, I think. He smelled like cigarettes and had a chipped front tooth. He said \'wallet, now\' and I just froze, my legs felt like jelly. I couldn\'t tell you what color his jacket was. Obviously I\'m a pretty observant guy in general. It all happened in like five seconds."',
+      indicators: <String>[
+        'Describes his legs feeling like jelly',
+        'Admits he can\'t recall the jacket color',
+        'Says he\'s a pretty observant guy',
+        'Remembers the smell of cigarettes',
+        'Says it all happened in five seconds',
+        'Says "obviously" before describing himself',
+      ],
+      answers: <int>{0, 1, 3},
+      insight: 'Body sensations (jelly legs), smells and admitted gaps (the jacket) are what real memories contain. Calling himself observant contradicts the gap he just admitted and adds nothing about the event.',
+    ),
+    Challenge.cluster(
+      id: 't6',
+      level: 6,
+      flag: Flag.truthMarkers,
+      prompt: 'Tap the 3 signs this account is likely truthful.',
+      profile: 'A babysitter explains how a child got a scrape:\n\n"We were at the park, Mia was on the monkey bars, and I was maybe ten feet away. She slipped on the third bar, I remember because she was counting out loud. She cried, but honestly she calmed down fast once I gave her a sticker. I\'m extremely careful with kids. I have years of experience and great references."',
+      indicators: <String>[
+        'Remembers Mia counting the bars out loud',
+        'Mentions years of experience and references',
+        'Admits she was about ten feet away',
+        'Says she is extremely careful with kids',
+        'Includes the sticker that calmed her down',
+        'Says "honestly" before the crying part',
+      ],
+      answers: <int>{0, 2, 4},
+      insight: 'Admitting something unflattering (being ten feet away) is a strong truth marker: liars rarely volunteer details that hurt them. Small specific memories (counting out loud, the sticker) fit real events. Credentials describe her, not what happened.',
+    ),
+    Challenge.cluster(
+      id: 't7',
+      level: 6,
+      flag: Flag.truthMarkers,
+      prompt: 'Tap the 3 signs this account is likely truthful.',
+      highLoad: true,
+      profile: 'An employee explains \$200 missing from petty cash:\n\n"I opened the box around noon to pay the pizza guy, Tony, the one with the neck tattoo. I counted it then, and I\'m positive it was all there, every single bill. After that I put it back in the top drawer, or maybe the second drawer, I go back and forth on that. I remember feeling rushed because the phones kept ringing. I want to stress I\'ve never had a cash issue in nine years here. I followed the procedure exactly, to the letter."',
+      indicators: <String>[
+        'Names the pizza guy and his neck tattoo',
+        'Is "positive" every single bill was there',
+        'Isn\'t sure which drawer it went into',
+        'Mentions feeling rushed by ringing phones',
+        'Stresses nine years without a cash issue',
+        'Says he followed procedure to the letter',
+      ],
+      answers: <int>{0, 2, 3},
+      insight: 'Certainty about the part that matters ("positive", "every single bill") and stressing a perfect record are credibility pitches. The truth markers are the incidental detail (the tattoo), the honest uncertainty about the drawer, and a feeling tied to a concrete cause.',
+    ),
+    Challenge.cluster(
+      id: 't8',
+      level: 6,
+      flag: Flag.truthMarkers,
+      prompt: 'Tap the 3 signs this account is likely truthful.',
+      highLoad: true,
+      profile: 'A driver describes a crash at an intersection:\n\n"So the light was green, definitely green, I\'m 100 percent on that. I was humming along to some song, I can\'t even tell you which one. The other car came out of nowhere, and the airbag smelled like gunpowder, which I didn\'t expect. My first thought, weirdly, was that I\'d be late picking up my dry cleaning. I\'m a very safe driver. I\'ve never had so much as a parking ticket."',
+      indicators: <String>[
+        'Insists the light was "definitely" green',
+        'Can\'t remember which song he was humming',
+        'Notes the airbag smelled like gunpowder',
+        'Says the car came "out of nowhere"',
+        'Admits an odd first thought about dry cleaning',
+        'Mentions never getting a parking ticket',
+      ],
+      answers: <int>{1, 2, 4},
+      insight: 'Odd, irrelevant thoughts (the dry cleaning) and unexpected sensations (the gunpowder smell) are hard to invent, and admitting he forgot a trivial detail adds credibility. Notice the certainty sits on the one fact that decides fault: the light.',
+    ),
+    Challenge.cluster(
+      id: 't9',
+      level: 6,
+      flag: Flag.truthMarkers,
+      prompt: 'Tap the 3 signs this account is likely truthful.',
+      highLoad: true,
+      profile: 'A student explains how a lab sample got contaminated:\n\n"I prepped the slides Tuesday after lunch. Dr. Hale stopped by and joked that my gloves looked two sizes too big, which, fair, they were. I may have touched the bench edge before sealing slide four, I genuinely can\'t rule that out. I logged everything in the notebook exactly on time. Everyone in the lab knows I\'m meticulous. There is no possible way the mistake came from my station."',
+      indicators: <String>[
+        'Recounts Dr. Hale\'s joke about his gloves',
+        'Admits he may have touched the bench edge',
+        'Says he logged everything exactly on time',
+        'Says everyone knows he\'s meticulous',
+        'Agrees, unprompted, that the gloves were too big',
+        'Claims there\'s "no possible way" it was him',
+      ],
+      answers: <int>{0, 1, 4},
+      insight: 'The account contradicts itself: he admits he may have touched the bench, then claims "no possible way". The truthful parts are the reproduced conversation and the concessions against his own interest; the absolutes are the pitch.',
+    ),
+    Challenge.cluster(
+      id: 't10',
+      level: 6,
+      flag: Flag.truthMarkers,
+      prompt: 'Tap the 3 signs this account is likely truthful.',
+      highLoad: true,
+      profile: 'A neighbor describes an argument next door:\n\n"It was around 10:30, maybe a bit later, the news had just ended. I heard a man shout something like \'you always do this,\' and a door slammed so hard my picture frame rattled. I didn\'t call anyone, and honestly I feel bad about that now. I want to be very clear that I am a reliable witness. I have absolutely perfect hearing, I\'ve been tested."',
+      indicators: <String>[
+        'Feels bad, unprompted, about not calling anyone',
+        'Says she has "absolutely perfect" hearing',
+        'Notes her picture frame rattled',
+        'Gives the time as "maybe a bit later" than 10:30',
+        'Calls herself a very reliable witness',
+        'Says she wants to be very clear',
+      ],
+      answers: <int>{0, 2, 3},
+      insight: 'Admitting a feeling that makes her look bad, a small physical detail (the rattling frame) and an approximate, self-corrected time are truth markers. Claims of perfect hearing and reliability are about her credibility, not the event. Note that "honestly" appears in a truthful sentence: one qualifier alone proves nothing.',
+    ),
+    Challenge.scenario(
+      id: 'i1',
+      flag: Flag.openQuestion,
+      context: 'You\'re interviewing a warehouse worker about a missing pallet of electronics. You want his full account of Thursday\'s shift before anything else.',
+      moves: <String>[
+        'Ask: "Did you load any pallets onto trucks on Thursday?"',
+        'Ask: "Walk me through Thursday, start to finish."',
+        'Ask: "You were on the loading dock Thursday, weren\'t you?"',
+        'Ask: "Why do you think the pallet went missing on your shift?"',
+      ],
+      answer: 1,
+      insight: 'Start wide. An open "walk me through it" question gets a free narrative before you shape it. Yes/no and leading questions ("weren\'t you?") hand over your theory and give you one word to judge.',
+    ),
+    Challenge.scenario(
+      id: 'i2',
+      flag: Flag.contamination,
+      context: 'A witness to a hit-and-run says she "didn\'t really see the car." Police already know it was a red pickup with a dented tailgate.',
+      moves: <String>[
+        'Ask: "Was it a red pickup? Maybe with a dented tailgate?"',
+        'Ask: "Any small thing at all? A color, a sound, a shape?"',
+        'Ask: "Most witnesses remember the color. Can you try harder?"',
+        'Tell her the details so she knows what to look for in a lineup.',
+      ],
+      answer: 1,
+      insight: 'Never feed details you know. Once she hears "red pickup" you can\'t separate her memory from your suggestion, and the detail is useless as a check. Prompt across senses instead, and don\'t pressure ("try harder"): it invites guessing.',
+    ),
+    Challenge.scenario(
+      id: 'i3',
+      flag: Flag.probeHotSpot,
+      context: 'A suspect\'s pitch rose and he touched his neck when you asked about the parking garage. Everything else matched his baseline.',
+      moves: <String>[
+        'Accuse him: "Your body just told me you\'re lying about the garage."',
+        'Move on and come back to the garage later with open questions.',
+        'Ask him directly why he touched his neck just now.',
+        'Write it off, since a single topic isn\'t a pattern worth chasing.',
+      ],
+      answer: 1,
+      insight: 'A hot spot is a place to dig, not a verdict. Accusing ends cooperation, and pointing out body language teaches people to control it. Note it, keep rapport, and return with open questions to see if the reaction repeats.',
+    ),
+    Challenge.scenario(
+      id: 'i4',
+      flag: Flag.rapport,
+      context: 'A nervous 19-year-old intern sits down for an interview about a data leak. She\'s shaking and hasn\'t made eye contact.',
+      moves: <String>[
+        'Start with easy questions about her studies and first weeks here.',
+        'Open by telling her the evidence against her is already very strong.',
+        'Skip small talk, since nervous people crack faster under pressure.',
+        'Read her the company\'s policy on leaks so she knows what\'s at stake.',
+      ],
+      answer: 0,
+      insight: 'Rapport first, and it also gives you a baseline. Nervousness isn\'t guilt: innocent people are often scared in interviews. Pressure now and you can\'t tell fear of the situation from fear of being caught.',
+    ),
+    Challenge.scenario(
+      id: 'i5',
+      flag: Flag.probeHotSpot,
+      context: 'A suspect says: "I fed the dog at seven. After that I went to the store around noon." You want to explore the gap.',
+      moves: <String>[
+        'Ask: "So you did absolutely nothing at all between seven and noon?"',
+        'Ask: "What happened after you fed the dog?"',
+        'Ask: "Were you over at the Miller house sometime between seven and noon?"',
+        'Point out that five hours is a long time to leave unexplained.',
+      ],
+      answer: 1,
+      insight: 'Probe a gap with an open, neutral question that starts from the last thing they told you. "So you did nothing?" invites a quick yes, naming the Miller house reveals what you know, and pointing out the gap puts them on guard before you learn anything.',
+    ),
+    Challenge.scenario(
+      id: 'i6',
+      flag: Flag.contamination,
+      context: 'Mid-statement, the suspect pauses and asks: "Do you guys already know who was in the office that night?"',
+      moves: <String>[
+        'Say yes, and that cameras caught everything, to see how he reacts.',
+        'Tell him who you suspect so he understands the situation clearly.',
+        'Say "We\'re still putting it together. Tell me what you know."',
+        'Answer that you can\'t share anything and end the interview.',
+      ],
+      answer: 2,
+      insight: 'He\'s fishing for what you know so he can fit his story to it. Don\'t reveal evidence or theories, and don\'t bluff about cameras: a false claim can wreck your credibility. Calmly turn it back to his account.',
+    ),
+    Challenge.scenario(
+      id: 'i7',
+      flag: Flag.probeHotSpot,
+      highLoad: true,
+      context: 'Your suspect gave a detailed, confident timeline for the whole evening except one line: "Then I drove around for a while to clear my head." He\'s been cooperative and friendly.',
+      moves: <String>[
+        'Thank him and wrap up, since the timeline is detailed and checks out.',
+        'Ask him to tell the whole evening again, but backwards from midnight.',
+        'Tell him "driving around" sounds made up and ask what he\'s hiding.',
+        'Ask: "Did you drive past the victim\'s street while you were out?"',
+      ],
+      answer: 1,
+      insight: 'Reverse-order recall raises cognitive load: a rehearsed story is easy forward and hard backward, while real memories hold up. It also forces detail into the vague "drove around" stretch without accusing him or leaking that you care about the victim\'s street.',
+    ),
+    Challenge.scenario(
+      id: 'i8',
+      flag: Flag.rapport,
+      highLoad: true,
+      context: 'Two hours in, the suspect snaps: "This is a joke! I\'ve given you three hours of my life!" Until now he\'s answered everything.',
+      moves: <String>[
+        'Match his energy so he knows you won\'t be pushed around in here.',
+        'Acknowledge it: "It\'s been long, I get it. A few more questions."',
+        'Treat the outburst as proof he\'s hiding something and press harder.',
+        'Stop immediately and schedule a new interview for some other day.',
+      ],
+      answer: 1,
+      insight: 'Frustration after hours of questions is normal fatigue, not a confession. Escalating ends cooperation, and reading guilt into it is confirmation bias. Acknowledging the feeling lowers the temperature and keeps the conversation going.',
+    ),
+    Challenge.scenario(
+      id: 'i9',
+      flag: Flag.openQuestion,
+      highLoad: true,
+      context: 'A witness gave a vague account of a fight: "Some guys argued and then it got physical." You want more detail without leading her.',
+      moves: <String>[
+        'Ask: "Was the guy in the red hoodie the one who started it?"',
+        'Ask: "Close your eyes and picture the spot. What do you see?"',
+        'Ask: "Did someone throw a punch, or was it more like shoving?"',
+        'Ask: "How many guys were there? Three? Four?"',
+      ],
+      answer: 1,
+      insight: 'Mentally reinstating the scene is a core Cognitive Interview technique: it unlocks detail without suggesting anything. "Red hoodie" leaks a detail, and offering choices ("punch or shoving", "three or four") limits her to your options.',
+    ),
+    Challenge.scenario(
+      id: 'i10',
+      flag: Flag.contamination,
+      highLoad: true,
+      context: 'Two witnesses saw the same robbery and are waiting together in the lobby. You only have time to interview one right now.',
+      moves: <String>[
+        'Let them chat so they feel relaxed and remember more for you later.',
+        'Interview them together so their stories can fill in each other\'s gaps.',
+        'Separate them now and ask them not to discuss what they saw.',
+        'Have them write one summary together while you finish paperwork.',
+      ],
+      answer: 2,
+      insight: 'Witnesses who talk blend their memories (memory conformity): one person\'s detail becomes the other\'s "memory". Separate them early and interview each one alone to keep the accounts independent.',
+    ),
+    Challenge.statement(
+      id: 'd1',
+      flag: Flag.nonAnswer,
+      level: 8,
+      prompt: 'Tap the line with the red flag.',
+      question: 'You text your roommate: "Did you eat my leftover pizza?"',
+      sentences: <String>[
+        'hey! just got home from work, so tired, long day lol',
+        'u know im not the type to take ppl\'s food',
+        'also we\'re out of paper towels and dish soap btw',
+      ],
+      answer: 1,
+      insight: 'A yes/no question answered with a character claim ("I\'m not the type") is a non-answer, in texts just like in interviews. The small talk around it makes it feel normal.',
+    ),
+    Challenge.statement(
+      id: 'd2',
+      flag: Flag.distancing,
+      level: 8,
+      prompt: 'Tap the line with the red flag.',
+      question: 'An email from a manager to HR after a complaint from an employee named Jordan.',
+      sentences: <String>[
+        'Jordan has been on my team for two years and is usually a strong performer.',
+        'I have always tried to treat every person on my team fairly and equally.',
+        'The individual in question has been difficult ever since the review.',
+      ],
+      answer: 2,
+      insight: '"Jordan" becomes "the individual in question" exactly where the manager describes the conflict. A formal, distancing label in an otherwise personal email shows where the writer wants emotional distance.',
+    ),
+    Challenge.statement(
+      id: 'd3',
+      flag: Flag.minimizing,
+      level: 8,
+      prompt: 'Tap the line with the red flag.',
+      question: 'Your partner texts after your joint bank account is overdrawn.',
+      sentences: <String>[
+        'it was just a little online shopping, nothing major',
+        'i paid the electric bill on tuesday like we talked about',
+        'also the car payment came out early this month for some reason',
+      ],
+      answer: 0,
+      insight: '"Just", "a little" and "nothing major" shrink something they won\'t put a number on. Ask for the amount.',
+    ),
+    Challenge.statement(
+      id: 'd4',
+      flag: Flag.tenseShift,
+      level: 8,
+      prompt: 'Tap the line with the red flag.',
+      question: 'A customer\'s message to an airline about a "lost" bag.',
+      sentences: <String>[
+        'I checked my blue suitcase at the desk in Denver at about 6 a.m.',
+        'The agent printed the tag and I watched it disappear down the belt.',
+        'At baggage claim in Boston I wait an hour and it never comes out.',
+      ],
+      answer: 2,
+      insight: 'Past tense ("checked", "printed", "watched") switches to present ("wait", "comes") at the key moment. Tense shifts show up in writing too, often where the story is being constructed.',
+    ),
+    Challenge.statement(
+      id: 'd5',
+      flag: Flag.qualifier,
+      level: 8,
+      prompt: 'Tap the line with the red flag.',
+      question: 'An online review of a mattress, posted from a brand-new account.',
+      sentences: <String>[
+        'I bought this mattress three weeks ago after my old one finally gave out.',
+        'Trust me, this is literally the best sleep I have had in my entire life.',
+        'Delivery took about five days and the box fit through our front door.',
+      ],
+      answer: 1,
+      insight: '"Trust me" and "literally the best ... in my entire life" are persuasion, not description. Fake reviews lean on superlatives and credibility boosters; real ones mention specifics, including small negatives.',
+    ),
+    Challenge.statement(
+      id: 'd6',
+      flag: Flag.temporalGap,
+      level: 8,
+      prompt: 'Tap the line with the red flag.',
+      question: 'Your teen texts at 2 a.m. after missing curfew.',
+      sentences: <String>[
+        'we left the movie at like 10:30 and got food at the diner on main',
+        'then we were hanging out for a while and lost track of time',
+        'jake drove me home and dropped me off right at the corner',
+      ],
+      answer: 1,
+      insight: '"For a while" covers about three hours between the diner and getting home, the part a parent most wants to know. Everything else is specific.',
+    ),
+    Challenge.statement(
+      id: 'd7',
+      flag: Flag.pronounDrop,
+      level: 8,
+      prompt: 'Tap the line with the red flag.',
+      highLoad: true,
+      question: 'A coworker\'s Slack message explaining why a client folder disappeared.',
+      sentences: <String>[
+        'Morning! So I was cleaning up the shared drive yesterday like Pat asked.',
+        'I archived the old Q1 folders and renamed the templates to the new format.',
+        'I also merged the duplicate contact sheets, there were like six of them.',
+        'Moved the Benson folder into temp storage while sorting everything out.',
+        'I\'ll double check the backups this afternoon and let you know what I find.',
+      ],
+      answer: 3,
+      insight: 'Every action is owned with "I" except the one involving the missing client folder. In a long, cheerful, cooperative message, the dropped pronoun is the only structural change.',
+    ),
+    Challenge.statement(
+      id: 'd8',
+      flag: Flag.nonAnswer,
+      level: 8,
+      prompt: 'Tap the line with the red flag.',
+      highLoad: true,
+      question: 'A dating-app match replies after you ask: "Are you still seeing anyone else?"',
+      sentences: <String>[
+        'haha I had such a good time with you on Saturday night',
+        'you know how much I hate drama, I\'m an open book with you',
+        'I deleted the app on Sunday actually, it was getting so annoying',
+        'work has been crazy this week but I\'m free Thursday night if you are',
+        'there\'s that new thai place on 4th we should try',
+      ],
+      answer: 1,
+      insight: 'The question was yes or no. Line 2 swaps the answer for a character claim ("I\'m an open book"). Deleting the app (line 3) sounds like an answer but isn\'t one: you can stop using an app and still be seeing someone. Then the subject changes.',
+    ),
+    Challenge.statement(
+      id: 'd9',
+      flag: Flag.distancing,
+      level: 8,
+      prompt: 'Tap the line with the red flag.',
+      highLoad: true,
+      question: 'A business partner\'s email about money missing from your shared account.',
+      sentences: <String>[
+        'Hi Sam, thanks for flagging this so quickly, I know it\'s stressful.',
+        'I pulled the statements for March and April and went through each line.',
+        'Most of the transfers match invoices from our usual suppliers, Sam.',
+        'There are three I want to look into more before I say anything final.',
+        'Those particular transactions were not something I authorized.',
+      ],
+      answer: 4,
+      insight: '"Those particular transactions" and the passive "were not something I authorized" create distance: the writer never says "I didn\'t make those transfers." Everything before it is warm and direct, which makes the shift easy to miss.',
+    ),
+    Challenge.statement(
+      id: 'd10',
+      flag: Flag.qualifier,
+      level: 8,
+      prompt: 'Tap the line with the red flag.',
+      highLoad: true,
+      question: 'A contractor replies after you ask why the job is two weeks late.',
+      sentences: <String>[
+        'Thanks for checking in, I know the timeline has been frustrating.',
+        'The tile supplier pushed back our delivery twice, which I sent you.',
+        'Honestly, my crew has been on your house every single day.',
+        'We\'re finishing grout tomorrow and the fixtures go in on Thursday.',
+        'I\'ll send updated photos tonight so you can see where things are.',
+      ],
+      answer: 2,
+      insight: '"Honestly" plus an absolute ("every single day") boosts the one claim you could easily check with a neighbor. The specific, checkable details elsewhere (supplier delays, photos) don\'t need a boost.',
     ),
   ];
 }
@@ -2021,7 +2936,7 @@ class NodePreviewSheet extends StatelessWidget {
     final level = Curriculum.level(node.level);
     final color = node.isReview ? Palette.gold : level.color;
     final weakest = game.weakestFlag;
-    final type = ChallengeType.values[node.level - 1];
+    final type = level.type;
 
     return SafeArea(
       child: Padding(
@@ -2394,7 +3309,7 @@ class _QuestScreenState extends State<QuestScreen> with SingleTickerProviderStat
           ..showSnackBar(const SnackBar(
             duration: Duration(milliseconds: 1400),
             backgroundColor: Palette.surfaceHigh,
-            content: Text('A cluster needs exactly 3. Deselect one first.',
+            content: Text('Pick exactly 3. Deselect one first.',
                 style: TextStyle(color: Palette.textPrimary)),
           ));
         return;
@@ -2749,6 +3664,7 @@ class ChallengeView extends StatelessWidget {
       ChallengeType.microExpression => _microBody(),
       ChallengeType.cluster => _clusterBody(),
       ChallengeType.statement => _statementBody(),
+      ChallengeType.scenario => _scenarioBody(),
     };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2772,6 +3688,25 @@ class ChallengeView extends StatelessWidget {
         icon: Icons.person_search,
         text: challenge.context,
         accent: Palette.green,
+      ),
+      const SizedBox(height: 16),
+      for (var i = 0; i < challenge.options.length; i++)
+        OptionTile(
+          visual: _visual(i),
+          onTap: _tap(i),
+          leading: LetterBadge(letter: String.fromCharCode(65 + i), visual: _visual(i)),
+          text: challenge.options[i],
+        ),
+    ];
+  }
+
+  List<Widget> _scenarioBody() {
+    return <Widget>[
+      ContextCard(
+        label: 'CASE FILE',
+        icon: Icons.policy,
+        text: challenge.context,
+        accent: Curriculum.level(challenge.level).color,
       ),
       const SizedBox(height: 16),
       for (var i = 0; i < challenge.options.length; i++)
@@ -2822,20 +3757,26 @@ class ChallengeView extends StatelessWidget {
 
   List<Widget> _clusterBody() {
     final remaining = challenge.requiredSelections - selection.length;
+    final truth = challenge.flag == Flag.truthMarkers;
     return <Widget>[
       ContextCard(
-        label: 'BEHAVIOR LOG',
-        icon: Icons.assignment,
+        label: truth ? 'WITNESS ACCOUNT' : 'BEHAVIOR LOG',
+        icon: truth ? Icons.record_voice_over : Icons.assignment,
         text: challenge.context,
-        accent: Palette.purple,
+        accent: Curriculum.level(challenge.level).color,
       ),
       const SizedBox(height: 14),
       Row(
         children: <Widget>[
-          const Expanded(
+          Expanded(
             child: Text(
-              'STRESS INDICATORS',
-              style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.1),
+              truth ? 'TRUTH MARKERS' : 'STRESS INDICATORS',
+              style: const TextStyle(
+                color: Palette.textMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.1,
+              ),
             ),
           ),
           AnimatedContainer(
@@ -2868,12 +3809,23 @@ class ChallengeView extends StatelessWidget {
   }
 
   List<Widget> _statementBody() {
+    final digital = challenge.level == 8;
     return <Widget>[
-      InterviewerBubble(question: challenge.context),
+      InterviewerBubble(
+        question: challenge.context,
+        label: digital ? 'CONTEXT' : 'INTERVIEWER',
+        icon: digital ? Icons.sms : Icons.mic,
+        accent: Curriculum.level(challenge.level).color,
+      ),
       const SizedBox(height: 16),
-      const Text(
-        'SUBJECT\'S STATEMENT',
-        style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.1),
+      Text(
+        digital ? 'THE MESSAGE' : 'SUBJECT\'S STATEMENT',
+        style: const TextStyle(
+          color: Palette.textMuted,
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.1,
+        ),
       ),
       const SizedBox(height: 10),
       for (var i = 0; i < challenge.options.length; i++)
@@ -3099,18 +4051,27 @@ class ContextCard extends StatelessWidget {
 }
 
 class InterviewerBubble extends StatelessWidget {
-  const InterviewerBubble({super.key, required this.question});
+  const InterviewerBubble({
+    super.key,
+    required this.question,
+    this.label = 'INTERVIEWER',
+    this.icon = Icons.mic,
+    this.accent = Palette.orange,
+  });
   final String question;
+  final String label;
+  final IconData icon;
+  final Color accent;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        const CircleAvatar(
+        CircleAvatar(
           radius: 22,
-          backgroundColor: Palette.orange,
-          child: Icon(Icons.mic, color: Colors.white),
+          backgroundColor: accent,
+          child: Icon(icon, color: Colors.white),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -3124,14 +4085,14 @@ class InterviewerBubble extends StatelessWidget {
                 bottomRight: Radius.circular(18),
                 topLeft: Radius.circular(4),
               ),
-              border: Border.all(color: Palette.orange.withAlpha(110), width: 1.5),
+              border: Border.all(color: accent.withAlpha(110), width: 1.5),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                const Text(
-                  'INTERVIEWER',
-                  style: TextStyle(color: Palette.orange, fontSize: 11.5, fontWeight: FontWeight.w800, letterSpacing: 1.1),
+                Text(
+                  label,
+                  style: TextStyle(color: accent, fontSize: 11.5, fontWeight: FontWeight.w800, letterSpacing: 1.1),
                 ),
                 const SizedBox(height: 4),
                 Text(

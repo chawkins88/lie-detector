@@ -28,11 +28,24 @@ Or paste `lib/main.dart` into any new Flutter project.
 
 | Area | Where in `main.dart` |
 | --- | --- |
-| Curriculum: 4 levels, 38 challenges (standard + High Cognitive Load) | `Curriculum` |
+| Curriculum: 8 levels, 90 challenges (standard + High Cognitive Load) | `Curriculum` |
 | Hearts, IP, streak, accuracy, weakness map | `GameState` |
 | Retry queue, difficulty swap, weighted review builder | `QuestSession`, `QuestBuilder` |
 | Mind Tree dashboard + persistent header | `MindTreeScreen`, `StatsHeader` |
 | Quest flow, bottom feedback sheet, completion card | `QuestScreen`, `FeedbackSheet`, `QuestCompleteView` |
+
+## Courses
+
+1. **The Baseline:** spot the moment behavior breaks from a person's normal.
+2. **Micro-Expressions & Asymmetry:** name the emotion from a brief flash card.
+3. **Cluster Decoding:** pick the 3 real stress signals out of 6.
+4. **Statement Analysis:** pronoun drops, time gaps, tense shifts, non-answers.
+5. **Verbal Tells:** qualifiers, oaths, distancing, minimizing, stalling.
+6. **Truth Signals:** what real memories sound like versus credibility pitches.
+7. **Interview Tactics:** choose the best next question or move.
+8. **Digital Deception:** tells in texts, emails, reviews and DMs.
+
+Each course has 2 lessons and an adaptive review; a final exam covers everything.
 
 ## Game rules
 
