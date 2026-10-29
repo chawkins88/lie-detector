@@ -53,6 +53,24 @@ Each course has 2 lessons and an adaptive review; a final exam covers everything
 Baseline and statement questions always offer **"Nothing here"**, and some cases are
 genuinely truthful, so you practice not crying wolf as well as catching lies.
 
+## Memory Gym
+
+A second tab that trains memory with techniques that hold up in research, not generic brain games:
+
+- **Number Span**: chunking digits into meaningful groups.
+- **Story Chain**: the link method, chaining words into one vivid story.
+- **Memory Palace**: the method of loci along a 12-stop route through your own home.
+- **Names & Faces**: name hooks that tie a name and a fact to a face.
+- **Kim's Game**: spotting what changed or went missing in a grid.
+- **Person Snapshot**: observation recall of a stranger's details, plus fact-vs-inference questions.
+- **Spaced Review**: flashcards for every technique and Cold Reading concept, on a 1 → 3 → 7 → 14 → 30 day schedule.
+
+Every drill has a short lesson and adjusts difficulty after each round (one level up when you
+nail it, down when you miss), so you're always training at your edge. A daily workout of
+about 5 minutes covers spaced review, Number Span and a rotating drill of the day.
+
+Progress (both tabs) is saved on the phone with `shared_preferences`; nothing leaves the device.
+
 ## Game rules
 
 - 3 hearts. A wrong answer costs 1 heart and the challenge repeats at the end of the quest.

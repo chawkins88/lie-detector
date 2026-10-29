@@ -10,16 +10,71 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const ColdReadingApp());
+  final store = await AppStore.open();
+  runApp(ColdReadingApp(store: store));
+}
+
+/// Days since a fixed epoch, by the calendar (immune to DST hour shifts).
+int dayIndex([DateTime? when]) {
+  final t = when ?? DateTime.now();
+  return DateTime.utc(t.year, t.month, t.day).difference(DateTime.utc(2024)).inDays;
+}
+
+int _readInt(Object? value, int fallback) => value is int ? value : fallback;
+
+void _readCounts<K>(Object? raw, Map<K, int> into, Map<String, K> byName) {
+  if (raw is! Map) return;
+  raw.forEach((Object? key, Object? value) {
+    final k = byName[key];
+    if (k != null && value is int) into[k] = value;
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PERSISTENCE: one JSON blob in on-device storage
+// ════════════════════════════════════════════════════════════════════════════
+
+class AppStore {
+  AppStore._(this._prefs);
+
+  static const String _key = 'cold_reading_state_v1';
+  final SharedPreferences? _prefs;
+
+  static Future<AppStore> open() async {
+    try {
+      return AppStore._(await SharedPreferences.getInstance());
+    } catch (_) {
+      return AppStore._(null); // storage unavailable: run in memory
+    }
+  }
+
+  factory AppStore.memoryOnly() => AppStore._(null);
+
+  Map<String, dynamic>? load() {
+    final raw = _prefs?.getString(_key);
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void save(Map<String, Object?> data) {
+    _prefs?.setString(_key, jsonEncode(data));
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2121,9 +2176,16 @@ class QuestReward {
 }
 
 class GameState extends ChangeNotifier {
-  GameState() {
+  GameState({AppStore? store}) : _store = store ?? AppStore.memoryOnly() {
+    _restore(_store.load());
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
   }
+
+  final AppStore _store;
+  bool _dirty = false;
+
+  /// Memory Gym progress, saved with everything else.
+  final MemoryState memory = MemoryState();
 
   static const int maxHearts = 3;
   static const Duration heartRegenInterval = Duration(minutes: 2);
@@ -2142,7 +2204,7 @@ class GameState extends ChangeNotifier {
   int hearts = maxHearts;
   int insightPoints = 0;
   int streak = 0;
-  DateTime? _lastActiveDay;
+  int? _lastActiveDay;
 
   /// Index of the furthest unlocked node. Every node before it is completed.
   int unlockedIndex = 0;
@@ -2228,7 +2290,7 @@ class GameState extends ChangeNotifier {
       if (hearts > 0) hearts--;
       _nextHeartAt ??= DateTime.now().add(heartRegenInterval);
     }
-    notifyListeners();
+    _changed();
     return gain;
   }
 
@@ -2251,7 +2313,7 @@ class GameState extends ChangeNotifier {
       if (hearts >= maxHearts) _nextHeartAt = null;
     }
 
-    notifyListeners();
+    _changed();
     return QuestReward(
       bonusIp: bonus,
       flawless: flawless,
@@ -2265,25 +2327,106 @@ class GameState extends ChangeNotifier {
     insightPoints -= refillCost;
     hearts = maxHearts;
     _nextHeartAt = null;
-    notifyListeners();
+    _changed();
     return true;
   }
 
   bool _touchStreak() {
-    final today = DateUtils.dateOnly(DateTime.now());
+    final today = dayIndex();
     final last = _lastActiveDay;
-    if (last != null) {
-      final gap = today.difference(last).inDays;
-      if (gap == 0) return false;
-      streak = gap == 1 ? streak + 1 : 1;
-    } else {
-      streak = 1;
-    }
+    if (last == today) return false;
+    streak = (last != null && today - last == 1) ? streak + 1 : 1;
     _lastActiveDay = today;
     return true;
   }
 
+  // ── Memory Gym ──────────────────────────────────────────────────────────
+
+  void recordMemoryTrial(MemoryDrill drill, {required bool passed, required int levelDelta, required int ip}) {
+    memory.applyTrial(drill, passed: passed, delta: levelDelta);
+    insightPoints += ip;
+    _changed();
+  }
+
+  /// Returns true if this session extended the day streak.
+  bool completeMemorySession(MemoryDrill drill) {
+    memory.finishSession(drill, dayIndex());
+    final extended = _touchStreak();
+    _changed();
+    return extended;
+  }
+
+  void reviewCard(String id, {required bool knew}) {
+    memory.review(id, knew: knew, today: dayIndex());
+    if (knew) insightPoints += 1;
+    _changed();
+  }
+
+  // ── Saving ──────────────────────────────────────────────────────────────
+
+  void _changed() {
+    _dirty = true;
+    notifyListeners();
+  }
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'version': 1,
+        'hearts': hearts,
+        'ip': insightPoints,
+        'streak': streak,
+        'lastDay': _lastActiveDay,
+        'unlocked': unlockedIndex,
+        'completed': completedNodeIds.toList(),
+        'answered': totalAnswered,
+        'correct': totalCorrect,
+        'recent': _recentResults,
+        'attempts': <String, int>{for (final e in flagAttempts.entries) e.key.name: e.value},
+        'misses': <String, int>{for (final e in flagMisses.entries) e.key.name: e.value},
+        'typeMisses': <String, int>{for (final e in typeMisses.entries) e.key.name: e.value},
+        'nextHeart': _nextHeartAt?.millisecondsSinceEpoch,
+        'memory': memory.toJson(),
+      };
+
+  @visibleForTesting
+  void restoreFrom(Map<String, dynamic> data) => _restore(data);
+
+  void _restore(Map<String, dynamic>? data) {
+    if (data == null) return;
+    try {
+      hearts = _readInt(data['hearts'], maxHearts).clamp(0, maxHearts);
+      insightPoints = math.max(0, _readInt(data['ip'], 0));
+      streak = math.max(0, _readInt(data['streak'], 0));
+      final last = data['lastDay'];
+      _lastActiveDay = last is int ? last : null;
+      if (_lastActiveDay == null || dayIndex() - _lastActiveDay! > 1) streak = 0;
+      unlockedIndex = _readInt(data['unlocked'], 0).clamp(0, Curriculum.nodes.length);
+      final nodeIds = Curriculum.nodes.map((n) => n.id).toSet();
+      final completed = data['completed'];
+      if (completed is List) completedNodeIds.addAll(completed.whereType<String>().where(nodeIds.contains));
+      totalAnswered = _readInt(data['answered'], 0);
+      totalCorrect = _readInt(data['correct'], 0);
+      final recent = data['recent'];
+      if (recent is List) _recentResults.addAll(recent.whereType<bool>().take(rollingWindow));
+      final flags = Flag.values.asNameMap();
+      _readCounts(data['attempts'], flagAttempts, flags);
+      _readCounts(data['misses'], flagMisses, flags);
+      _readCounts(data['typeMisses'], typeMisses, ChallengeType.values.asNameMap());
+      final next = data['nextHeart'];
+      if (next is int && hearts < maxHearts) _nextHeartAt = DateTime.fromMillisecondsSinceEpoch(next);
+      final mem = data['memory'];
+      if (mem is Map<String, dynamic>) memory.restore(mem);
+    } catch (_) {
+      // A damaged save keeps whatever loaded cleanly; the rest stays default.
+    }
+  }
+
+  void _persist() {
+    _dirty = false;
+    _store.save(toJson());
+  }
+
   void _tick() {
+    if (_dirty) _persist();
     if (hearts >= maxHearts) {
       _nextHeartAt = null;
       return;
@@ -2293,6 +2436,7 @@ class GameState extends ChangeNotifier {
     if (!now.isBefore(_nextHeartAt!)) {
       hearts++;
       _nextHeartAt = hearts < maxHearts ? now.add(heartRegenInterval) : null;
+      _dirty = true;
     }
     notifyListeners(); // keeps the regen countdown live
   }
@@ -2300,6 +2444,7 @@ class GameState extends ChangeNotifier {
   @override
   void dispose() {
     _ticker?.cancel();
+    if (_dirty) _persist();
     super.dispose();
   }
 }
@@ -2452,14 +2597,15 @@ class QuestBuilder {
 // ════════════════════════════════════════════════════════════════════════════
 
 class ColdReadingApp extends StatefulWidget {
-  const ColdReadingApp({super.key});
+  const ColdReadingApp({super.key, required this.store});
+  final AppStore store;
 
   @override
   State<ColdReadingApp> createState() => _ColdReadingAppState();
 }
 
 class _ColdReadingAppState extends State<ColdReadingApp> {
-  final GameState _game = GameState();
+  late final GameState _game = GameState(store: widget.store);
 
   @override
   void dispose() {
@@ -2482,8 +2628,58 @@ class _ColdReadingAppState extends State<ColdReadingApp> {
           surface: Palette.surface,
         ),
         snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
+        navigationBarTheme: NavigationBarThemeData(
+          backgroundColor: Palette.surface,
+          indicatorColor: Palette.blue.withAlpha(60),
+        ),
       ),
-      home: MindTreeScreen(game: _game),
+      home: HomeShell(game: _game),
+    );
+  }
+}
+
+/// Two sections: the Cold Reading tree and the Memory Gym.
+class HomeShell extends StatefulWidget {
+  const HomeShell({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<HomeShell> createState() => _HomeShellState();
+}
+
+class _HomeShellState extends State<HomeShell> {
+  int _tab = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: IndexedStack(
+        index: _tab,
+        children: <Widget>[
+          MindTreeScreen(game: widget.game),
+          MemoryGymScreen(game: widget.game),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tab,
+        onDestinationSelected: (i) {
+          HapticFeedback.selectionClick();
+          setState(() => _tab = i);
+        },
+        destinations: const <Widget>[
+          NavigationDestination(
+            icon: Icon(Icons.psychology_outlined),
+            selectedIcon: Icon(Icons.psychology),
+            label: 'Cold Reading',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.lightbulb_outline),
+            selectedIcon: Icon(Icons.lightbulb),
+            label: 'Memory',
+          ),
+        ],
+      ),
     );
   }
 }
@@ -4830,6 +5026,2974 @@ class OutOfHeartsView extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  MEMORY GYM: MODEL
+// ════════════════════════════════════════════════════════════════════════════
+
+enum MemoryDrill {
+  digits('Number Span', 'Chunking', Icons.dialpad, Palette.blue, 5, 3, 16, 'digits'),
+  words('Story Chain', 'The link method', Icons.link, Palette.purple, 5, 3, 15, 'words'),
+  palace('Memory Palace', 'Method of loci', Icons.account_balance, Palette.gold, 5, 3, 12, 'items'),
+  faces('Names & Faces', 'Name hooks', Icons.badge, Palette.pink, 3, 2, 8, 'people'),
+  kim("Kim's Game", 'Visual attention', Icons.grid_view, Palette.teal, 1, 1, 6, ''),
+  snapshot('Person Snapshot', 'Observation recall', Icons.person_search, Palette.orange, 1, 1, 6, ''),
+  review('Spaced Review', 'Retrieval & spacing', Icons.style, Palette.green, 0, 0, 0, '');
+
+  const MemoryDrill(
+    this.title,
+    this.technique,
+    this.icon,
+    this.color,
+    this.startLevel,
+    this.minLevel,
+    this.maxLevel,
+    this.unit,
+  );
+
+  final String title;
+  final String technique;
+  final IconData icon;
+  final Color color;
+  final int startLevel;
+  final int minLevel;
+  final int maxLevel;
+  final String unit;
+
+  bool get leveled => maxLevel > 0;
+  String levelLabel(int level) => unit.isEmpty ? 'Level $level' : '$level $unit';
+}
+
+class ReviewProgress {
+  ReviewProgress(this.box, this.dueDay);
+  final int box;
+  final int dueDay;
+}
+
+class MemoryState {
+  /// Days until the next review for each Leitner box.
+  static const List<int> intervals = <int>[1, 1, 3, 7, 14, 30];
+  static const int newCardsPerDay = 6;
+
+  final Map<MemoryDrill, int> level = <MemoryDrill, int>{for (final d in MemoryDrill.values) d: d.startLevel};
+  final Map<MemoryDrill, int> best = <MemoryDrill, int>{for (final d in MemoryDrill.values) d: 0};
+  final Map<MemoryDrill, int> sessions = <MemoryDrill, int>{for (final d in MemoryDrill.values) d: 0};
+  final Map<MemoryDrill, int> lastDoneDay = <MemoryDrill, int>{};
+  final Map<String, ReviewProgress> cards = <String, ReviewProgress>{};
+  int newCardsDay = -1;
+  int newCardsToday = 0;
+
+  bool doneToday(MemoryDrill d, int today) => lastDoneDay[d] == today;
+
+  int newCardsLeft(int today) => math.max(0, newCardsPerDay - (newCardsDay == today ? newCardsToday : 0));
+
+  List<StudyCard> reviewQueue(int today) {
+    final due = MemoryContent.cards.where((c) {
+      final p = cards[c.id];
+      return p != null && p.dueDay <= today;
+    }).toList()
+      ..sort((a, b) => cards[a.id]!.dueDay.compareTo(cards[b.id]!.dueDay));
+    final fresh = MemoryContent.cards.where((c) => !cards.containsKey(c.id)).take(newCardsLeft(today));
+    return <StudyCard>[...due, ...fresh];
+  }
+
+  int learnedCards() => cards.values.where((p) => p.box >= 2).length;
+
+  void applyTrial(MemoryDrill d, {required bool passed, required int delta}) {
+    if (!d.leveled) return;
+    final current = level[d]!;
+    if (passed && current > best[d]!) best[d] = current;
+    level[d] = (current + delta).clamp(d.minLevel, d.maxLevel);
+  }
+
+  void finishSession(MemoryDrill d, int today) {
+    sessions[d] = sessions[d]! + 1;
+    lastDoneDay[d] = today;
+  }
+
+  void review(String id, {required bool knew, required int today}) {
+    final previous = cards[id];
+    if (previous == null) {
+      if (newCardsDay != today) {
+        newCardsDay = today;
+        newCardsToday = 0;
+      }
+      newCardsToday++;
+    }
+    final box = knew ? math.min((previous?.box ?? 0) + 1, intervals.length - 1) : 0;
+    cards[id] = ReviewProgress(box, today + intervals[box]);
+  }
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'level': <String, int>{for (final e in level.entries) e.key.name: e.value},
+        'best': <String, int>{for (final e in best.entries) e.key.name: e.value},
+        'sessions': <String, int>{for (final e in sessions.entries) e.key.name: e.value},
+        'lastDone': <String, int>{for (final e in lastDoneDay.entries) e.key.name: e.value},
+        'cards': <String, List<int>>{for (final e in cards.entries) e.key: <int>[e.value.box, e.value.dueDay]},
+        'newDay': newCardsDay,
+        'newCount': newCardsToday,
+      };
+
+  void restore(Map<String, dynamic> data) {
+    final drills = MemoryDrill.values.asNameMap();
+    _readCounts(data['level'], level, drills);
+    _readCounts(data['best'], best, drills);
+    _readCounts(data['sessions'], sessions, drills);
+    _readCounts(data['lastDone'], lastDoneDay, drills);
+    for (final d in MemoryDrill.values) {
+      if (d.leveled) level[d] = level[d]!.clamp(d.minLevel, d.maxLevel);
+    }
+    final known = MemoryContent.cards.map((c) => c.id).toSet();
+    final raw = data['cards'];
+    if (raw is Map) {
+      raw.forEach((Object? key, Object? value) {
+        if (key is String && known.contains(key) && value is List && value.length == 2) {
+          final box = value[0];
+          final due = value[1];
+          if (box is int && due is int) {
+            cards[key] = ReviewProgress(box.clamp(0, intervals.length - 1), due);
+          }
+        }
+      });
+    }
+    newCardsDay = _readInt(data['newDay'], -1);
+    newCardsToday = _readInt(data['newCount'], 0);
+  }
+}
+
+class LessonPage {
+  const LessonPage(this.title, this.body, [this.example]);
+  final String title;
+  final String body;
+  final String? example;
+}
+
+class StudyCard {
+  const StudyCard(this.id, this.front, this.back);
+  final String id;
+  final String front;
+  final String back;
+}
+
+class SnapshotCase {
+  const SnapshotCase(this.place, this.text, this.questions);
+  final String place;
+  final String text;
+  final List<SnapshotQuestion> questions;
+}
+
+/// The first option is the correct one; options are shuffled when shown.
+class SnapshotQuestion {
+  const SnapshotQuestion(this.question, this.options, this.explain);
+  final String question;
+  final List<String> options;
+  final String explain;
+}
+
+class PalaceStop {
+  const PalaceStop(this.emoji, this.name);
+  final String emoji;
+  final String name;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  MEMORY GYM: CONTENT
+// ════════════════════════════════════════════════════════════════════════════
+
+class MemoryContent {
+  MemoryContent._();
+
+  static const Map<MemoryDrill, List<LessonPage>> lessons = <MemoryDrill, List<LessonPage>>{
+    MemoryDrill.digits: <LessonPage>[
+      LessonPage('Your working memory is small',
+          'Most people can hold about four "chunks" in mind at once. Raw digits fill those slots fast, which is why 7 to 9 digits is where most people top out.'),
+      LessonPage('Chunking',
+          'Group digits into bigger units. Eight separate digits become three chunks. Phone numbers use the same trick.',
+          '4 1 9 7 2 0 0 1  →  41 · 97 · 2001'),
+      LessonPage('Make chunks mean something',
+          'Turn chunks into things you already know: a year (1984), a famous number (911, 365), an age, a jersey number. Say them in a rhythm in your head.',
+          '1 9 8 4 0 7 2 3  →  1984 (the book) · 07 (Bond) · 23 (Jordan)'),
+      LessonPage('How the drill works',
+          'A number flashes up, then you type it. Get it right and the next one is a digit longer; miss and it gets a digit shorter. Your level climbs as the skill sticks.'),
+    ],
+    MemoryDrill.words: <LessonPage>[
+      LessonPage('Lists are hard, stories are easy',
+          'Memory evolved for events, not lists. Linking items into one vivid story turns a list into a single event you can replay.'),
+      LessonPage('Make it vivid',
+          'Exaggerate size, add movement, sound and emotion, and make it absurd. A boring image fades; a ridiculous one sticks.'),
+      LessonPage('Example',
+          'Each item does something to the next one, so each word pulls up the one after it.',
+          'piano, banana, rocket, sock  →  A PIANO crashes onto a giant BANANA, which blasts off like a ROCKET and lands in a smelly SOCK.'),
+      LessonPage('How the drill works',
+          'Study the words and build your story, then tap them in the right order from a mix that includes decoys.'),
+    ],
+    MemoryDrill.palace: <LessonPage>[
+      LessonPage('The oldest memory technique',
+          'Greek and Roman speakers memorized whole speeches by walking through a building in their mind. Memory champions still use it, and studies show it can greatly improve recall of lists.'),
+      LessonPage('Your route',
+          'Use your own home. The drill uses the same 12 stops every time, in this order: front door, coat hook, couch, TV, plant, dining table, kitchen sink, fridge, stove, bathroom mirror, bathtub, bed. Picture YOUR versions of each one.'),
+      LessonPage('Place it, don\'t just see it',
+          'At each stop, put the item there in a strange, vivid way. Make it interact with the spot.',
+          'A giraffe stuck in your front door. A guitar on fire on your couch.'),
+      LessonPage('Walk it back',
+          'To recall, walk the route again in your mind and look at each stop. The items will be waiting. The same route can hold a new list every day.'),
+    ],
+    MemoryDrill.faces: <LessonPage>[
+      LessonPage('Why names slip',
+          'Usually the name was never stored: you were busy thinking about what to say next. The fix is attention plus a hook.'),
+      LessonPage('Focus, repeat, hook',
+          'Look at the face, say the name back ("Nice to meet you, Dana"), then link the name to an image tied to the face or the person.',
+          'Dana → a Dalmatian. Mark → a marker behind his ear. Rosa → a rose in her hair.'),
+      LessonPage('Hook the detail too',
+          'Hang the fact on the same image, so one picture holds the face, the name and the detail.',
+          'Dana the nurse: a Dalmatian in scrubs taking your pulse.'),
+      LessonPage('How the drill works',
+          'Meet a few people, then match faces to names and names to what you learned about them. More people join as you improve.'),
+    ],
+    MemoryDrill.kim: <LessonPage>[
+      LessonPage("Kim's Game",
+          'From Rudyard Kipling\'s novel Kim, where a spy in training memorizes trays of objects. Scouts, soldiers and police still use it to sharpen observation.'),
+      LessonPage('Scan with a system',
+          'Don\'t stare at random. Sweep each row left to right, name every item in your head, and notice patterns.',
+          'Top row: two animals and a fruit. Middle: everything is round.'),
+      LessonPage('How the drill works',
+          'Study the grid, then spot what changed or what went missing. The grids grow as you improve.'),
+    ],
+    MemoryDrill.snapshot: <LessonPage>[
+      LessonPage('Observation is memory',
+          'You can\'t remember what you never noticed. Investigators train themselves to log specific details: clothing, hands, shoes, objects and posture.'),
+      LessonPage('Head to toe, every time',
+          'Use one fixed order so nothing gets skipped: face and hair → hands → clothing → shoes → objects and setting.'),
+      LessonPage('Facts versus guesses',
+          'Keep what you saw separate from what you infer. Mud on the shoes is a fact; "been walking off-road" is a guess. Questions test both, which is the core of cold reading.'),
+      LessonPage('How the drill works',
+          'Read the snapshot before it disappears, then answer from memory. Higher levels give you less time.'),
+    ],
+    MemoryDrill.review: <LessonPage>[
+      LessonPage('The forgetting curve',
+          'We forget most new information within days unless we review it, but each well-timed review makes the memory last much longer.'),
+      LessonPage('Testing beats rereading',
+          'Trying to recall an answer strengthens memory far more than reading it again. That\'s why you always see the question first.'),
+      LessonPage('Spacing',
+          'Cards you know come back after longer and longer gaps: 1, 3, 7, 14, then 30 days. Cards you miss come back tomorrow. A few minutes a day is enough.'),
+      LessonPage('Be honest',
+          'Only tap "Knew it" if you recalled the answer before flipping. Fooling the schedule only fools you.'),
+    ],
+  };
+
+  static const List<String> words = <String>[
+    'apple', 'anchor', 'balloon', 'banana', 'barrel', 'basket', 'bell', 'bicycle', 'blanket', 'boot',
+    'bottle', 'bridge', 'broom', 'bucket', 'cactus', 'camel', 'candle', 'canoe', 'carrot', 'castle',
+    'cat', 'chain', 'cheese', 'chimney', 'clock', 'cloud', 'coconut', 'comb', 'cookie', 'crown',
+    'cup', 'diamond', 'dinosaur', 'dolphin', 'donut', 'drum', 'duck', 'eagle', 'egg', 'elephant',
+    'envelope', 'feather', 'fence', 'flag', 'flashlight', 'fork', 'frog', 'ghost', 'giraffe', 'glove',
+    'guitar', 'hammer', 'harp', 'helmet', 'honey', 'horse', 'igloo', 'iron', 'jacket', 'jellyfish',
+    'kangaroo', 'kettle', 'key', 'kite', 'ladder', 'lamp', 'lemon', 'lion', 'lobster', 'magnet',
+    'mirror', 'monkey', 'moon', 'mushroom', 'needle', 'nest', 'octopus', 'onion', 'owl', 'paddle',
+    'parrot', 'peanut', 'pencil', 'penguin', 'piano', 'pillow', 'pineapple', 'pizza', 'pumpkin', 'rabbit',
+    'robot', 'rocket', 'rope', 'saddle', 'scissors', 'shark', 'shovel', 'skateboard', 'snail', 'snowman',
+    'sock', 'spider', 'spoon', 'statue', 'sword', 'tiger', 'toaster', 'tractor', 'trumpet', 'turtle',
+    'umbrella', 'vase', 'violin', 'volcano', 'wagon', 'whale', 'whistle', 'window', 'zebra', 'tornado',
+  ];
+
+  static const List<PalaceStop> palaceRoute = <PalaceStop>[
+    PalaceStop('🚪', 'front door'),
+    PalaceStop('🧥', 'coat hook'),
+    PalaceStop('🛋️', 'couch'),
+    PalaceStop('📺', 'TV'),
+    PalaceStop('🪴', 'plant'),
+    PalaceStop('🍽️', 'dining table'),
+    PalaceStop('🚰', 'kitchen sink'),
+    PalaceStop('🧊', 'fridge'),
+    PalaceStop('🔥', 'stove'),
+    PalaceStop('🪞', 'bathroom mirror'),
+    PalaceStop('🛁', 'bathtub'),
+    PalaceStop('🛏️', 'bed'),
+  ];
+
+  static const List<PalaceStop> palaceItems = <PalaceStop>[
+    PalaceStop('🎸', 'guitar'), PalaceStop('🦒', 'giraffe'), PalaceStop('🍕', 'pizza'), PalaceStop('🚀', 'rocket'),
+    PalaceStop('🐙', 'octopus'), PalaceStop('🎈', 'balloon'), PalaceStop('🔨', 'hammer'), PalaceStop('🍌', 'banana'),
+    PalaceStop('🐧', 'penguin'), PalaceStop('⏰', 'alarm clock'), PalaceStop('🧀', 'cheese'), PalaceStop('🎺', 'trumpet'),
+    PalaceStop('🦈', 'shark'), PalaceStop('🌋', 'volcano'), PalaceStop('🧲', 'magnet'), PalaceStop('🥥', 'coconut'),
+    PalaceStop('🐸', 'frog'), PalaceStop('👑', 'crown'), PalaceStop('🕯️', 'candle'), PalaceStop('🍩', 'donut'),
+    PalaceStop('🐢', 'turtle'), PalaceStop('🔑', 'key'), PalaceStop('🥁', 'drum'), PalaceStop('🦉', 'owl'),
+    PalaceStop('🍍', 'pineapple'), PalaceStop('⚓', 'anchor'), PalaceStop('🐘', 'elephant'), PalaceStop('🧸', 'teddy bear'),
+    PalaceStop('🌵', 'cactus'), PalaceStop('🍉', 'watermelon'), PalaceStop('🦞', 'lobster'), PalaceStop('🛹', 'skateboard'),
+    PalaceStop('🎃', 'pumpkin'), PalaceStop('🐝', 'bee'), PalaceStop('🦄', 'unicorn'), PalaceStop('🍦', 'ice cream'),
+    PalaceStop('🐍', 'snake'), PalaceStop('🪁', 'kite'), PalaceStop('🦖', 'dinosaur'), PalaceStop('🎻', 'violin'),
+    PalaceStop('🥚', 'egg'), PalaceStop('🐌', 'snail'), PalaceStop('💎', 'diamond'), PalaceStop('🦜', 'parrot'),
+    PalaceStop('🚲', 'bicycle'), PalaceStop('☂️', 'umbrella'), PalaceStop('🧯', 'fire extinguisher'), PalaceStop('🪕', 'banjo'),
+  ];
+
+  static const List<String> palacePrompts = <String>[
+    'Picture a giant {item} jammed into the {stop}.',
+    'The {item} is on fire at the {stop}. Smell the smoke.',
+    'Dozens of tiny copies of the {item} pour out of the {stop}.',
+    'The {item} is dancing and singing at the {stop}.',
+    'Your {stop} is made entirely out of {item}.',
+    'The {item} explodes all over the {stop}. What a mess.',
+    'A {item} the size of a car is sleeping on the {stop}.',
+  ];
+
+  static const List<String> faces = <String>[
+    '👩‍🦰', '👨‍🦱', '👵', '👴', '🧔', '👩‍🦳', '👱‍♀️', '👨‍🦲', '🧑‍🦱', '👩‍🦱',
+    '👱‍♂️', '🧓', '👨‍🦰', '👩‍🦲', '🧕', '🧑‍🦰', '👲', '👳', '👧', '👦',
+  ];
+
+  static const List<String> names = <String>[
+    'Dana', 'Marcus', 'Priya', 'Leo', 'Grace', 'Omar', 'Hannah', 'Victor', 'Elena', 'Kenji',
+    'Sofia', 'Ray', 'Tasha', 'Derek', 'Rosa', 'Nate', 'Maya', 'Ben', 'Claire', 'Raj',
+    'Luis', 'Ava', 'Jordan', 'Kim', 'Tom', 'Nina', 'Sam', 'Iris', 'Felix', 'Mona',
+    'Hugo', 'Zara', 'Owen', 'Lena', 'Paul', 'Ruby', 'Theo', 'Jade', 'Carl', 'Vera',
+  ];
+
+  static const List<String> jobs = <String>[
+    'nurse', 'firefighter', 'chef', 'pilot', 'teacher', 'mechanic', 'lawyer', 'barista', 'dentist', 'carpenter',
+    'photographer', 'accountant', 'florist', 'paramedic', 'librarian', 'plumber', 'architect', 'farmer', 'DJ', 'tailor',
+  ];
+
+  static const List<String> details = <String>[
+    'has a dog named Pepper', 'just moved from Ohio', 'runs marathons', 'collects vinyl records',
+    'is afraid of birds', 'speaks four languages', 'grew up on a sailboat', 'has twin daughters',
+    'hates pickles', 'plays the cello', 'broke an arm skiing last year', 'is training for a triathlon',
+    'bakes sourdough every Sunday', 'rides a vintage motorcycle', 'was on a game show once', 'keeps bees',
+    'knits sweaters for a cat', 'volunteers at a food bank', 'climbed Mount Kilimanjaro', 'is learning to surf',
+    'restores old clocks', 'has never seen snow', 'grows giant pumpkins', 'loves horror movies',
+    "can solve a Rubik's cube", 'writes mystery novels', 'is allergic to cats', 'lived in Japan for two years',
+  ];
+
+  static const List<String> kimItems = <String>[
+    '🍎', '🍌', '🍇', '🍓', '🥕', '🌽', '🍄', '🥨', '🧀', '🍩', '🍪', '🎂', '☕', '🐶', '🐱',
+    '🐭', '🐰', '🦊', '🐻', '🐼', '🐸', '🐵', '🐔', '🐧', '🐙', '🦋', '🐢', '🐍', '🦀', '⚽',
+    '🏀', '🎾', '🎲', '🎯', '🎸', '🎺', '🥁', '📷', '💡', '🔑', '🔨', '✂️', '📎', '🧲', '☂️',
+    '🎈', '🎁', '👟', '🎩', '👓', '🌵', '🌻', '🌙', '⭐', '❄️', '🚗', '🚲', '✈️', '⛵', '⏰',
+  ];
+
+  static const List<SnapshotCase> snapshots = <SnapshotCase>[
+    SnapshotCase('Coffee shop',
+        'A man in his 40s sits alone by the window. Grey suit jacket, no tie, top button undone. Wedding ring on his left hand and a pale tan line on his right wrist where a watch would go. His laptop is open, but he keeps checking his phone and putting it face down. His paper cup has "DAVE" written on it. There\'s mud on the toe of his left shoe.',
+        <SnapshotQuestion>[
+          SnapshotQuestion('What name was on the cup?', <String>['Dave', 'Dan', 'Steve', 'Mike'], 'The cup said "DAVE".'),
+          SnapshotQuestion('Where was the tan line?', <String>['Right wrist', 'Left wrist', 'Ring finger', 'Neck'],
+              'A pale line on his right wrist, where a watch would go.'),
+          SnapshotQuestion('Which inference is most reasonable?', <String>[
+            'He usually wears a watch but isn\'t today',
+            'He is left-handed',
+            'He works as a lawyer',
+            'He isn\'t married',
+          ], 'The tan line is evidence of a habit. Nothing supports his job or handedness, and he wears a wedding ring.'),
+        ]),
+    SnapshotCase('Train platform',
+        'A woman in her 20s carries a large hiking backpack with a rolled yoga mat strapped to the side. Red beanie, green rain jacket, black leggings. Two boarding passes stick out of her jacket pocket. She holds a paperback with the bookmark about three-quarters of the way through. Her right hand is bandaged across the knuckles.',
+        <SnapshotQuestion>[
+          SnapshotQuestion('What color was her beanie?', <String>['Red', 'Green', 'Black', 'Blue'],
+              'Red beanie; the jacket was green.'),
+          SnapshotQuestion('Which hand was bandaged?', <String>['Right', 'Left', 'Both', 'Neither'],
+              'Her right hand, across the knuckles.'),
+          SnapshotQuestion('What can you reasonably infer?', <String>[
+            'She is probably traveling with someone',
+            'She teaches yoga for a living',
+            'She hurt her hand rock climbing',
+            'She doesn\'t like her book',
+          ], 'Two boarding passes suggest a companion. A yoga mat doesn\'t make her a teacher, and nothing explains the injury.'),
+        ]),
+    SnapshotCase('Hardware store',
+        'An older man, maybe 70, in a faded blue baseball cap with an anchor logo. Flannel shirt with paint flecks on the sleeves. Reading glasses hang from a cord around his neck. His basket holds sandpaper, two paint brushes and wood glue. He pays in cash from a worn brown leather wallet and counts out exact change.',
+        <SnapshotQuestion>[
+          SnapshotQuestion('What logo was on his cap?', <String>['An anchor', 'An eagle', 'A fish', 'A star'],
+              'A faded blue cap with an anchor logo.'),
+          SnapshotQuestion('What was NOT in his basket?', <String>['A hammer', 'Sandpaper', 'Wood glue', 'Paint brushes'],
+              'He had sandpaper, two brushes and wood glue. No hammer.'),
+          SnapshotQuestion('Which inference is most reasonable?', <String>[
+            'He\'s working on a painting or woodworking project',
+            'He served in the navy',
+            'He paints houses for a living',
+            'He doesn\'t trust banks',
+          ], 'The basket and paint flecks support a project. An anchor cap hints at the navy but doesn\'t establish it, and paying cash isn\'t distrust.'),
+        ]),
+    SnapshotCase('Clinic waiting room',
+        'A teenage boy, about 16, in a soccer jersey with the number 9. Grass stains on both knees. One earbud in. His mother sits beside him filling out a form on a clipboard. He holds an ice pack against his left ankle, with the foot propped on the chair next to him.',
+        <SnapshotQuestion>[
+          SnapshotQuestion('What number was on his jersey?', <String>['9', '7', '11', '19'], 'Number 9.'),
+          SnapshotQuestion('Which ankle had the ice pack?', <String>['Left', 'Right', 'Both', 'Neither'], 'His left ankle.'),
+          SnapshotQuestion('Which inference is most reasonable?', <String>[
+            'He hurt his ankle playing soccer recently',
+            'He is the team captain',
+            'He broke his leg',
+            'He is skipping school',
+          ], 'Jersey, grass stains and an iced ankle point to a recent soccer injury. Nothing shows a break or captaincy.'),
+        ]),
+    SnapshotCase('Office lobby',
+        'A woman in her 30s in a navy blazer, her lanyard badge flipped backwards so the name doesn\'t show. She carries two coffees in a cardboard tray and a rolled-up poster tube under her arm. She\'s wearing white sneakers, but black heels stick out of her tote bag. She watches the elevator display and taps her foot.',
+        <SnapshotQuestion>[
+          SnapshotQuestion('What was under her arm?', <String>['A poster tube', 'An umbrella', 'A laptop', 'A newspaper'],
+              'A rolled-up poster tube.'),
+          SnapshotQuestion('What shoes was she wearing?', <String>['White sneakers', 'Black heels', 'Brown boots', 'Sandals'],
+              'White sneakers. The heels were in her bag, a classic trap.'),
+          SnapshotQuestion('Which inference is most reasonable?', <String>[
+            'She plans to change shoes later',
+            'She is hiding her identity',
+            'She works as an architect',
+            'She is late for a job interview',
+          ], 'Heels in the bag suggest a change of shoes. Flipped badges usually just spin around, and a poster tube doesn\'t make her an architect.'),
+        ]),
+    SnapshotCase('Park bench',
+        'A man in his 50s feeds pigeons from a paper bag. Brown corduroy jacket with elbow patches. A folded newspaper is open to the crossword, and there\'s a pen behind his right ear. A small dog\'s leash is looped around his wrist, but there\'s no dog in sight. His left shoelace is untied.',
+        <SnapshotQuestion>[
+          SnapshotQuestion('Where was the pen?', <String>['Behind his right ear', 'Behind his left ear', 'In his jacket pocket', 'On the bench'],
+              'Behind his right ear.'),
+          SnapshotQuestion('What page was the newspaper open to?', <String>['The crossword', 'Sports', 'Weather', 'Obituaries'],
+              'The crossword.'),
+          SnapshotQuestion('Which detail most deserves a follow-up question?', <String>[
+            'The leash with no dog',
+            'The elbow patches',
+            'The pigeons',
+            'The untied shoelace',
+          ], 'Out-of-place details carry the most information. A leash with no dog raises a real question.'),
+        ]),
+    SnapshotCase('Bus stop at night',
+        'A woman around 25 in purple hospital scrubs under an open black puffer jacket. Her ID badge is clipped to the scrubs pocket. She holds a takeout bag from "Golden Dragon" and yawns twice. Her sneakers have reflective strips, and a thermos sticks out of her backpack\'s side pocket.',
+        <SnapshotQuestion>[
+          SnapshotQuestion('What color were her scrubs?', <String>['Purple', 'Blue', 'Green', 'Pink'], 'Purple scrubs.'),
+          SnapshotQuestion('Which restaurant was the takeout from?', <String>['Golden Dragon', 'Jade Garden', 'Lucky Star', 'Red Lantern'],
+              '"Golden Dragon".'),
+          SnapshotQuestion('Which inference is most reasonable?', <String>[
+            'She probably just finished a long shift',
+            'She is a surgeon',
+            'She doesn\'t like cooking',
+            'She lives alone',
+          ], 'Scrubs, late hour, yawning and takeout fit the end of a shift. Her exact role and home life aren\'t shown.'),
+        ]),
+    SnapshotCase('Airport gate',
+        'A man in his 30s in a wrinkled white shirt, sleeves rolled up, his tie stuffed into his shirt pocket. Two phones lie on the seat beside him, one in a rugged case. His carry-on has a faded luggage tag from Lisbon. He talks quietly into an earpiece and writes numbers on the back of his boarding pass.',
+        <SnapshotQuestion>[
+          SnapshotQuestion('Where was his tie?', <String>['Stuffed in his shirt pocket', 'Around his neck', 'In his bag', 'On the seat'],
+              'Stuffed into his shirt pocket.'),
+          SnapshotQuestion('Which city was on the luggage tag?', <String>['Lisbon', 'Madrid', 'Rome', 'Paris'], 'Lisbon.'),
+          SnapshotQuestion('Which inference is most reasonable?', <String>[
+            'He has had a long day of travel or work',
+            'He is a spy',
+            'He lives in Lisbon',
+            'He trades stocks',
+          ], 'The wrinkled shirt and loosened tie fit a long day. Two phones and numbers don\'t make him a spy or a trader, and a faded tag only shows a past trip.'),
+        ]),
+  ];
+
+  static const List<StudyCard> cards = <StudyCard>[
+    // Memory techniques
+    StudyCard('m_chunk', 'What is chunking?',
+        'Grouping items into meaningful units (41 · 97 · 2001) so working memory can hold more.'),
+    StudyCard('m_link', 'How does the link (story) method work?',
+        'Chain the items into one vivid, absurd story so the list becomes a single event.'),
+    StudyCard('m_loci', 'How does a memory palace work?',
+        'Place each item at a stop along a familiar route, then walk the route in your mind to recall them in order.'),
+    StudyCard('m_names', 'What are three steps to remember a name?',
+        'Focus on the face, say the name back, and hook it to an image (Dana → Dalmatian).'),
+    StudyCard('m_testing', 'What is the testing effect?',
+        'Trying to recall information strengthens memory more than rereading it.'),
+    StudyCard('m_spacing', 'Why space out reviews?',
+        'Reviewing just as you start to forget makes memories last much longer than cramming.'),
+    // Cold Reading concepts
+    StudyCard('f_vocal', 'What is a vocal shift, and what does it mean?',
+        'A change in pitch, speed or volume from the person\'s own baseline, tied to one topic. A hot spot to probe, not proof of a lie.'),
+    StudyCard('f_gesture', 'What is gesture suppression?',
+        'A normally expressive person suddenly stops gesturing. It can signal cognitive load or the freeze response.'),
+    StudyCard('f_pacify', 'What are pacifiers?',
+        'Self-soothing touches (neck, collar, face, forehead) the brain uses to calm itself after a stressor.'),
+    StudyCard('f_ocular', 'Name two eye-behavior shifts worth noting.',
+        'Blink-rate surges and eye blocking. For someone who rarely makes eye contact, a sudden stare counts too.'),
+    StudyCard('f_posture', 'What do the feet and torso tell you?',
+        'We turn them toward what we like and away from what we want to escape. Suddenly freezing is also a stress response.'),
+    StudyCard('f_contempt', 'What makes contempt unique among expressions?',
+        'It\'s one-sided: one lip corner tightens and lifts. It signals moral superiority.'),
+    StudyCard('f_fear', 'How do you tell fear from surprise?',
+        'Fear pulls the raised brows together and stretches the lips sideways. Surprise has curved brows and a loose, dropped jaw.'),
+    StudyCard('f_disgust', 'What does disgust look like?', 'A wrinkled nose and raised upper lip, on both sides of the face.'),
+    StudyCard('f_anger', 'What is an early sign of anger?',
+        'Lips narrowing and pressing together, with lowered, knitted brows and tense lower lids.'),
+    StudyCard('f_surprise', 'How long does genuine surprise last?', 'Under a second. Surprise that lingers is usually performed.'),
+    StudyCard('f_sadness', 'Which sadness signal is hard to fake?',
+        'The inner corners of the eyebrows angling upward, a "reliable muscle" few people can move on purpose.'),
+    StudyCard('f_duping', 'What is duping delight?',
+        'A quick, suppressed smile of pleasure at getting away with a lie, at a moment that calls for distress.'),
+    StudyCard('f_happy', 'What separates a genuine smile from a social one?',
+        'The eyes: cheeks lift and crow\'s-feet appear (the Duchenne marker), not just the mouth.'),
+    StudyCard('f_cluster', 'What makes a valid behavioral cluster?',
+        'Three or more indicators that break baseline, appear together and follow the same question.'),
+    StudyCard('f_pronoun', 'What is a pronoun drop?',
+        'The "I" disappears from part of a statement ("Went home, made dinner"). The speaker may be distancing from those actions.'),
+    StudyCard('f_temporal', 'What is a temporal gap?',
+        'A phrase like "after that" or "later on" that skips time. Ask what happened in the gap.'),
+    StudyCard('f_tense', 'Why does a verb tense shift matter?',
+        'Memories are told in the past tense. A switch to present at the key moment can mean the story is being built.'),
+    StudyCard('f_nonanswer', 'What is a non-answer assertion?',
+        'Answering a direct question with a character claim ("I would never…") instead of a denial ("No, I didn\'t").'),
+    StudyCard('f_qualifier', 'What are credibility qualifiers?',
+        '"To be honest", "frankly", "I swear": phrases that try to make a claim sound true. Notice which claim they prop up.'),
+    StudyCard('f_distancing', 'What is distancing language?',
+        'Switching from a name to "that woman" or "the individual", showing where the speaker wants distance.'),
+    StudyCard('f_minimizing', 'What is minimizing language?', '"Just", "only", "a little": words that shrink an act. Ask for exact numbers.'),
+    StudyCard('f_stalling', 'Name two stalling tactics.',
+        'Repeating the question back, and "That\'s a good question." Both buy time instead of answering.'),
+    StudyCard('f_truth', 'Name three markers of a truthful account.',
+        'Spontaneous self-corrections, admitted memory gaps, and odd or unflattering details.'),
+    StudyCard('f_clean', 'Is a nervous, fidgety person lying?',
+        'Not if that\'s their baseline. Only changes from baseline matter; calling a lie without one is a false alarm.'),
+    StudyCard('f_open', 'Why start an interview with an open question?',
+        'It gets a free narrative before you shape it. Yes/no and leading questions hand over your theory.'),
+    StudyCard('f_probe', 'What should you do when you spot a hot spot?',
+        'Note it, keep rapport, and come back later with open questions. Don\'t accuse or point out body language.'),
+    StudyCard('f_contam', 'What is contamination in an interview?',
+        'Leaking details you know, or letting witnesses talk, so you can\'t tell memory from suggestion.'),
+    StudyCard('f_rapport', 'Why build rapport first?', 'It lowers fear and gives you a baseline. Nervousness isn\'t guilt.'),
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  MEMORY GYM: HOME
+// ════════════════════════════════════════════════════════════════════════════
+
+void openMemoryDrill(BuildContext context, GameState game, MemoryDrill drill, {bool replace = false}) {
+  final Widget screen = switch (drill) {
+    MemoryDrill.digits => DigitSpanScreen(game: game),
+    MemoryDrill.words => StoryChainScreen(game: game),
+    MemoryDrill.palace => MemoryPalaceScreen(game: game),
+    MemoryDrill.faces => NamesFacesScreen(game: game),
+    MemoryDrill.kim => KimsGameScreen(game: game),
+    MemoryDrill.snapshot => SnapshotScreen(game: game),
+    MemoryDrill.review => SpacedReviewScreen(game: game),
+  };
+  final route = MaterialPageRoute<void>(builder: (_) => screen);
+  if (replace) {
+    Navigator.of(context).pushReplacement(route);
+  } else {
+    Navigator.of(context).push(route);
+  }
+}
+
+void openMemoryLesson(BuildContext context, GameState game, MemoryDrill drill) {
+  Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => MemoryLessonScreen(game: game, drill: drill)));
+}
+
+class MemoryGymScreen extends StatefulWidget {
+  const MemoryGymScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<MemoryGymScreen> createState() => _MemoryGymScreenState();
+}
+
+class _MemoryGymScreenState extends State<MemoryGymScreen> {
+  static const List<MemoryDrill> _rotation = <MemoryDrill>[
+    MemoryDrill.words,
+    MemoryDrill.palace,
+    MemoryDrill.faces,
+    MemoryDrill.kim,
+    MemoryDrill.snapshot,
+  ];
+
+  GameState get game => widget.game;
+
+  @override
+  void initState() {
+    super.initState();
+    game.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    game.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final today = dayIndex();
+    final memory = game.memory;
+    final due = memory.reviewQueue(today).length;
+    final drillOfDay = _rotation[today % _rotation.length];
+
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: SafeArea(
+        bottom: false,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        'Memory Gym',
+                        style: TextStyle(color: Palette.textPrimary, fontSize: 26, fontWeight: FontWeight.w900),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'Real techniques, daily reps, spaced review.',
+                        style: TextStyle(color: Palette.textMuted, fontSize: 14),
+                      ),
+                    ],
+                  ),
+                ),
+                StatPill(emoji: '🔥', label: '${game.streak}', color: Palette.orange, tooltip: 'Day streak'),
+              ],
+            ),
+            const SizedBox(height: 18),
+            _TodayCard(
+              rows: <_TodayRow>[
+                _TodayRow(
+                  drill: MemoryDrill.review,
+                  subtitle: due == 0 ? 'All caught up' : '$due cards ready',
+                  done: memory.doneToday(MemoryDrill.review, today) || due == 0,
+                ),
+                _TodayRow(
+                  drill: MemoryDrill.digits,
+                  subtitle: MemoryDrill.digits.levelLabel(memory.level[MemoryDrill.digits]!),
+                  done: memory.doneToday(MemoryDrill.digits, today),
+                ),
+                _TodayRow(
+                  drill: drillOfDay,
+                  subtitle: 'Drill of the day · ${drillOfDay.levelLabel(memory.level[drillOfDay]!)}',
+                  done: memory.doneToday(drillOfDay, today),
+                ),
+              ],
+              onOpen: (d) => openMemoryDrill(context, game, d),
+            ),
+            const SizedBox(height: 22),
+            const Text(
+              'TECHNIQUES & DRILLS',
+              style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2),
+            ),
+            const SizedBox(height: 10),
+            for (final drill in MemoryDrill.values)
+              _DrillCard(
+                drill: drill,
+                status: drill == MemoryDrill.review
+                    ? '${memory.learnedCards()}/${MemoryContent.cards.length} cards learned'
+                    : '${drill.levelLabel(memory.level[drill]!)} · best ${memory.best[drill] == 0 ? '–' : drill.levelLabel(memory.best[drill]!)}',
+                onLearn: () => openMemoryLesson(context, game, drill),
+                onPractice: () => openMemoryDrill(context, game, drill),
+              ),
+            const SizedBox(height: 12),
+            const _ScienceCard(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TodayRow {
+  const _TodayRow({required this.drill, required this.subtitle, required this.done});
+  final MemoryDrill drill;
+  final String subtitle;
+  final bool done;
+}
+
+class _TodayCard extends StatelessWidget {
+  const _TodayCard({required this.rows, required this.onOpen});
+  final List<_TodayRow> rows;
+  final ValueChanged<MemoryDrill> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final doneCount = rows.where((r) => r.done).length;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Palette.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Palette.blue.withAlpha(120), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(Icons.today, color: Palette.blue, size: 20),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  "Today's workout",
+                  style: TextStyle(color: Palette.textPrimary, fontSize: 17, fontWeight: FontWeight.w900),
+                ),
+              ),
+              Text(
+                '$doneCount/${rows.length}',
+                style: const TextStyle(color: Palette.blue, fontWeight: FontWeight.w900),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'About 5 minutes. Daily reps beat long sessions.',
+            style: TextStyle(color: Palette.textMuted, fontSize: 13),
+          ),
+          const SizedBox(height: 10),
+          for (final row in rows)
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => onOpen(row.drill),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                child: Row(
+                  children: <Widget>[
+                    CircleAvatar(
+                      radius: 18,
+                      backgroundColor: row.drill.color.withAlpha(row.done ? 255 : 50),
+                      child: Icon(
+                        row.done ? Icons.check : row.drill.icon,
+                        color: row.done ? Colors.white : row.drill.color,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            row.drill.title,
+                            style: const TextStyle(color: Palette.textPrimary, fontWeight: FontWeight.w800, fontSize: 15),
+                          ),
+                          Text(row.subtitle, style: const TextStyle(color: Palette.textMuted, fontSize: 12.5)),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right, color: Palette.textMuted),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DrillCard extends StatelessWidget {
+  const _DrillCard({required this.drill, required this.status, required this.onLearn, required this.onPractice});
+  final MemoryDrill drill;
+  final String status;
+  final VoidCallback onLearn;
+  final VoidCallback onPractice;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Palette.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Palette.border, width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: drill.color,
+                child: Icon(drill.icon, color: Colors.white, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      drill.title,
+                      style: const TextStyle(color: Palette.textPrimary, fontSize: 17, fontWeight: FontWeight.w900),
+                    ),
+                    Text(
+                      drill.technique.toUpperCase(),
+                      style: TextStyle(color: drill.color, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(status, style: const TextStyle(color: Palette.textMuted, fontSize: 12.5)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: onLearn,
+                  icon: const Icon(Icons.menu_book, size: 18),
+                  label: const Text('Learn'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Palette.textPrimary,
+                    side: const BorderSide(color: Palette.border, width: 1.5),
+                    minimumSize: const Size.fromHeight(44),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: onPractice,
+                  icon: const Icon(Icons.play_arrow, size: 20),
+                  label: const Text('Practice'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: drill.color,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size.fromHeight(44),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScienceCard extends StatelessWidget {
+  const _ScienceCard();
+
+  static const List<String> _points = <String>[
+    'Techniques work. Memory palaces, chunking and story linking can multiply how much you recall, and you can use them anywhere.',
+    'Generic brain games mostly make you better at the game. Practice the kind of remembering you actually want to do.',
+    'Recall plus spacing: a few minutes of testing yourself every day beats long cramming sessions.',
+    'Sleep, exercise and attention matter. Memories are locked in during sleep, and you can\'t remember what you never noticed.',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Palette.teal.withAlpha(28),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Palette.teal.withAlpha(120)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Row(
+            children: <Widget>[
+              Icon(Icons.science, color: Palette.teal, size: 20),
+              SizedBox(width: 8),
+              Text(
+                'What actually builds memory',
+                style: TextStyle(color: Palette.teal, fontSize: 15, fontWeight: FontWeight.w900),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          for (final point in _points)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  const Text('•  ', style: TextStyle(color: Palette.teal, fontWeight: FontWeight.w900)),
+                  Expanded(
+                    child: Text(point, style: const TextStyle(color: Palette.textPrimary, fontSize: 13.5, height: 1.4)),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  MEMORY GYM: SHARED DRILL WIDGETS
+// ════════════════════════════════════════════════════════════════════════════
+
+class DrillScaffold extends StatelessWidget {
+  const DrillScaffold({super.key, required this.drill, required this.progress, required this.child, this.label});
+  final MemoryDrill drill;
+  final double progress;
+  final Widget child;
+  final String? label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: SafeArea(
+        child: Column(
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 6, 16, 4),
+              child: Row(
+                children: <Widget>[
+                  IconButton(
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    icon: const Icon(Icons.close, color: Palette.textMuted, size: 28),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          label ?? drill.title,
+                          style: TextStyle(color: drill.color, fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 0.6),
+                        ),
+                        const SizedBox(height: 6),
+                        TweenAnimationBuilder<double>(
+                          tween: Tween<double>(end: progress.clamp(0.0, 1.0)),
+                          duration: const Duration(milliseconds: 400),
+                          builder: (context, value, _) => ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: LinearProgressIndicator(
+                              value: value,
+                              minHeight: 10,
+                              backgroundColor: Palette.surfaceHigh,
+                              valueColor: AlwaysStoppedAnimation<Color>(drill.color),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(child: child),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Countdown bar for a study phase. Calls [onDone] when time runs out.
+class StudyTimer extends StatefulWidget {
+  const StudyTimer({super.key, required this.duration, required this.onDone, required this.color});
+  final Duration duration;
+  final VoidCallback onDone;
+  final Color color;
+
+  @override
+  State<StudyTimer> createState() => _StudyTimerState();
+}
+
+class _StudyTimerState extends State<StudyTimer> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(vsync: this, duration: widget.duration);
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addStatusListener((status) {
+      if (status == AnimationStatus.completed && mounted) widget.onDone();
+    });
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final secondsLeft = ((1 - _controller.value) * widget.duration.inMilliseconds / 1000).ceil();
+        return Row(
+          children: <Widget>[
+            Icon(Icons.timer, color: widget.color, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: LinearProgressIndicator(
+                  value: 1 - _controller.value,
+                  minHeight: 8,
+                  backgroundColor: Palette.surfaceHigh,
+                  valueColor: AlwaysStoppedAnimation<Color>(widget.color),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            SizedBox(
+              width: 34,
+              child: Text(
+                '${secondsLeft}s',
+                textAlign: TextAlign.right,
+                style: const TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class DrillIntro extends StatelessWidget {
+  const DrillIntro({
+    super.key,
+    required this.drill,
+    required this.level,
+    required this.tip,
+    required this.onStart,
+    required this.onLearn,
+  });
+
+  final MemoryDrill drill;
+  final int level;
+  final String tip;
+  final VoidCallback onStart;
+  final VoidCallback onLearn;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+      child: Column(
+        children: <Widget>[
+          const Spacer(),
+          CircleAvatar(
+            radius: 44,
+            backgroundColor: drill.color,
+            child: Icon(drill.icon, color: Colors.white, size: 44),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            drill.title,
+            style: const TextStyle(color: Palette.textPrimary, fontSize: 26, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 6),
+          if (drill.leveled)
+            Text(
+              drill.levelLabel(level),
+              style: TextStyle(color: drill.color, fontSize: 16, fontWeight: FontWeight.w800),
+            ),
+          const SizedBox(height: 18),
+          InfoBanner(icon: Icons.tips_and_updates, color: drill.color, text: tip),
+          const Spacer(),
+          ChunkyButton(label: 'Start', color: drill.color, onPressed: onStart),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: onLearn,
+            child: const Text(
+              'HOW DOES THIS TECHNIQUE WORK?',
+              style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800, letterSpacing: 0.6),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class DrillFeedback extends StatelessWidget {
+  const DrillFeedback({
+    super.key,
+    required this.passed,
+    required this.headline,
+    required this.levelText,
+    required this.child,
+    required this.onNext,
+    required this.nextLabel,
+  });
+
+  final bool passed;
+  final String headline;
+  final String levelText;
+  final Widget child;
+  final VoidCallback onNext;
+  final String nextLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = passed ? Palette.green : Palette.red;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: <Widget>[
+                      Icon(passed ? Icons.check_circle : Icons.cancel, color: color, size: 34),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          headline,
+                          style: TextStyle(color: color, fontSize: 22, fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(levelText, style: const TextStyle(color: Palette.textMuted, fontSize: 14)),
+                  const SizedBox(height: 16),
+                  child,
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          ChunkyButton(label: nextLabel, color: color, onPressed: onNext),
+        ],
+      ),
+    );
+  }
+}
+
+class DrillSummary extends StatelessWidget {
+  const DrillSummary({
+    super.key,
+    required this.drill,
+    required this.passed,
+    required this.total,
+    required this.ip,
+    required this.startLevel,
+    required this.endLevel,
+    required this.streakExtended,
+    required this.onAgain,
+  });
+
+  final MemoryDrill drill;
+  final int passed;
+  final int total;
+  final int ip;
+  final int startLevel;
+  final int endLevel;
+  final bool streakExtended;
+  final VoidCallback onAgain;
+
+  @override
+  Widget build(BuildContext context) {
+    final change = endLevel - startLevel;
+    final changeText = !drill.leveled
+        ? ''
+        : change > 0
+            ? 'Level up: ${drill.levelLabel(startLevel)} → ${drill.levelLabel(endLevel)}'
+            : change < 0
+                ? 'Eased off to ${drill.levelLabel(endLevel)}. That\'s how the training finds your edge.'
+                : 'Holding at ${drill.levelLabel(endLevel)}';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+      child: Column(
+        children: <Widget>[
+          const Spacer(),
+          const Text('🧠', style: TextStyle(fontSize: 72)),
+          const SizedBox(height: 12),
+          const Text(
+            'Session complete',
+            style: TextStyle(color: Palette.gold, fontSize: 28, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '$passed of $total perfect',
+            style: const TextStyle(color: Palette.textPrimary, fontSize: 17, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 18),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Palette.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Palette.border, width: 1.5),
+            ),
+            child: Column(
+              children: <Widget>[
+                _BreakdownLine(label: 'Insight Points', value: '+$ip IP'),
+                if (changeText.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 6),
+                  Text(changeText, textAlign: TextAlign.center, style: TextStyle(color: drill.color, fontWeight: FontWeight.w800)),
+                ],
+                if (streakExtended) const _BreakdownLine(label: 'Day streak', value: '🔥 extended'),
+              ],
+            ),
+          ),
+          const Spacer(),
+          ChunkyButton(label: 'Done', color: Palette.green, onPressed: () => Navigator.of(context).maybePop()),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: onAgain,
+            child: const Text(
+              'GO AGAIN',
+              style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800, letterSpacing: 0.8),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class QuizQuestion {
+  const QuizQuestion({required this.prompt, required this.options, required this.correct, this.visual, this.note});
+  final String prompt;
+  final List<String> options;
+  final int correct;
+  final String? visual;
+  final String? note;
+}
+
+/// Multiple-choice recall, one question at a time. Reports results at the end.
+class QuizRunner extends StatefulWidget {
+  const QuizRunner({super.key, required this.questions, required this.color, required this.onFinished});
+  final List<QuizQuestion> questions;
+  final Color color;
+  final ValueChanged<List<bool>> onFinished;
+
+  @override
+  State<QuizRunner> createState() => _QuizRunnerState();
+}
+
+class _QuizRunnerState extends State<QuizRunner> {
+  int _index = 0;
+  int? _chosen;
+  final List<bool> _results = <bool>[];
+
+  void _choose(int i) {
+    if (_chosen != null) return;
+    final correct = i == widget.questions[_index].correct;
+    if (correct) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+    setState(() {
+      _chosen = i;
+      _results.add(correct);
+    });
+  }
+
+  void _next() {
+    if (_index + 1 >= widget.questions.length) {
+      widget.onFinished(List<bool>.of(_results));
+      return;
+    }
+    setState(() {
+      _index++;
+      _chosen = null;
+    });
+  }
+
+  OptionVisual _visual(int i) {
+    final chosen = _chosen;
+    if (chosen == null) return OptionVisual.idle;
+    final q = widget.questions[_index];
+    if (i == q.correct) return i == chosen ? OptionVisual.correct : OptionVisual.missed;
+    return i == chosen ? OptionVisual.wrong : OptionVisual.idle;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final q = widget.questions[_index];
+    final chosen = _chosen;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Text(
+                    'QUESTION ${_index + 1} OF ${widget.questions.length}',
+                    style: TextStyle(color: widget.color, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.1),
+                  ),
+                  const SizedBox(height: 12),
+                  if (q.visual != null) ...<Widget>[
+                    Center(child: Text(q.visual!, style: const TextStyle(fontSize: 64))),
+                    const SizedBox(height: 10),
+                  ],
+                  Text(
+                    q.prompt,
+                    style: const TextStyle(color: Palette.textPrimary, fontSize: 21, fontWeight: FontWeight.w800, height: 1.3),
+                  ),
+                  const SizedBox(height: 16),
+                  for (var i = 0; i < q.options.length; i++)
+                    OptionTile(
+                      visual: _visual(i),
+                      onTap: chosen == null ? () => _choose(i) : null,
+                      text: q.options[i],
+                      bold: true,
+                    ),
+                  if (chosen != null && q.note != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: InfoBanner(icon: Icons.lightbulb, color: widget.color, text: q.note!),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          if (chosen != null) ...<Widget>[
+            const SizedBox(height: 12),
+            ChunkyButton(
+              label: _index + 1 >= widget.questions.length ? 'See results' : 'Next',
+              color: chosen == q.correct ? Palette.green : Palette.red,
+              onPressed: _next,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Options for a recall question: the answer plus [count] - 1 distractors.
+QuizQuestion buildChoiceQuestion({
+  required String prompt,
+  required String answer,
+  required Iterable<String> pool,
+  required math.Random rng,
+  String? visual,
+  String? note,
+  int count = 4,
+}) {
+  final distractors = pool.where((p) => p != answer).toSet().toList()..shuffle(rng);
+  final options = <String>[answer, ...distractors.take(count - 1)]..shuffle(rng);
+  return QuizQuestion(prompt: prompt, options: options, correct: options.indexOf(answer), visual: visual, note: note);
+}
+
+enum DrillPhase { intro, study, blank, recall, feedback, summary }
+
+/// Shared session bookkeeping for leveled drills.
+mixin DrillSession<T extends StatefulWidget> on State<T> {
+  final math.Random rng = math.Random();
+  DrillPhase phase = DrillPhase.intro;
+  int trial = 0;
+  int passedTrials = 0;
+  int sessionIp = 0;
+  int startLevel = 0;
+  bool streakExtended = false;
+  bool lastPassed = false;
+  int lastLevel = 0;
+
+  GameState get game;
+  MemoryDrill get drill;
+  int get totalTrials;
+
+  int get level => game.memory.level[drill]!;
+
+  double get progress {
+    final done = trial + (phase == DrillPhase.feedback || phase == DrillPhase.summary ? 1 : 0);
+    return totalTrials == 0 ? 0 : done / totalTrials;
+  }
+
+  void initSession() {
+    startLevel = level;
+  }
+
+  /// Records a trial and moves to feedback.
+  void finishTrial({required bool passed, required int levelDelta, required int ip}) {
+    lastPassed = passed;
+    lastLevel = level;
+    game.recordMemoryTrial(drill, passed: passed, levelDelta: levelDelta, ip: ip);
+    sessionIp += ip;
+    if (passed) passedTrials++;
+    if (passed) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+    setState(() => phase = DrillPhase.feedback);
+  }
+
+  String get levelChangeText {
+    final now = level;
+    if (now > lastLevel) return 'Next round: ${drill.levelLabel(now)} (up from ${drill.levelLabel(lastLevel)})';
+    if (now < lastLevel) return 'Next round: ${drill.levelLabel(now)} (eased off from ${drill.levelLabel(lastLevel)})';
+    return 'Staying at ${drill.levelLabel(now)}';
+  }
+
+  /// Advances to the next trial, or ends the session.
+  void nextTrial(VoidCallback startTrial) {
+    trial++;
+    if (trial >= totalTrials) {
+      streakExtended = game.completeMemorySession(drill);
+      setState(() => phase = DrillPhase.summary);
+    } else {
+      startTrial();
+    }
+  }
+
+  void restartSession(VoidCallback startTrial) {
+    trial = 0;
+    passedTrials = 0;
+    sessionIp = 0;
+    startLevel = level;
+    streakExtended = false;
+    startTrial();
+  }
+
+  Widget buildSummary(VoidCallback startTrial) => DrillSummary(
+        drill: drill,
+        passed: passedTrials,
+        total: totalTrials,
+        ip: sessionIp,
+        startLevel: startLevel,
+        endLevel: level,
+        streakExtended: streakExtended,
+        onAgain: () => restartSession(startTrial),
+      );
+
+  void openLesson() => openMemoryLesson(context, game, drill);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  MEMORY GYM: DRILLS
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Number Span (chunking) ────────────────────────────────────────────────
+
+class DigitSpanScreen extends StatefulWidget {
+  const DigitSpanScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<DigitSpanScreen> createState() => _DigitSpanScreenState();
+}
+
+class _DigitSpanScreenState extends State<DigitSpanScreen> with DrillSession<DigitSpanScreen> {
+  String _target = '';
+  String _entry = '';
+
+  @override
+  GameState get game => widget.game;
+  @override
+  MemoryDrill get drill => MemoryDrill.digits;
+  @override
+  int get totalTrials => 5;
+
+  @override
+  void initState() {
+    super.initState();
+    initSession();
+  }
+
+  void _startTrial() {
+    final digits = List<int>.generate(level, (_) => rng.nextInt(10));
+    setState(() {
+      _target = digits.join();
+      _entry = '';
+      phase = DrillPhase.study;
+    });
+  }
+
+  void _press(String key) {
+    if (phase != DrillPhase.recall) return;
+    HapticFeedback.selectionClick();
+    if (key == 'del') {
+      if (_entry.isNotEmpty) setState(() => _entry = _entry.substring(0, _entry.length - 1));
+      return;
+    }
+    if (key == 'ok') {
+      _submit();
+      return;
+    }
+    if (_entry.length >= _target.length) return;
+    setState(() => _entry += key);
+    if (_entry.length == _target.length) _submit();
+  }
+
+  void _submit() {
+    final passed = _entry == _target;
+    finishTrial(passed: passed, levelDelta: passed ? 1 : -1, ip: passed ? 2 + _target.length ~/ 3 : 0);
+  }
+
+  String _chunked(String s) {
+    final parts = <String>[];
+    for (var i = 0; i < s.length; i += 3) {
+      parts.add(s.substring(i, math.min(i + 3, s.length)));
+    }
+    return parts.join(' · ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DrillScaffold(
+      drill: drill,
+      progress: progress,
+      label: '${drill.title.toUpperCase()} · ROUND ${math.min(trial + 1, totalTrials)}/$totalTrials',
+      child: switch (phase) {
+        DrillPhase.intro => DrillIntro(
+            drill: drill,
+            level: level,
+            tip: 'Chunk it: split the number into groups of 2–3 and give each group a meaning or a rhythm.',
+            onStart: _startTrial,
+            onLearn: openLesson,
+          ),
+        DrillPhase.study || DrillPhase.blank => _buildStudy(),
+        DrillPhase.recall => _buildRecall(),
+        DrillPhase.feedback => DrillFeedback(
+            passed: lastPassed,
+            headline: lastPassed ? 'Perfect recall' : 'Not quite',
+            levelText: levelChangeText,
+            nextLabel: trial + 1 >= totalTrials ? 'Finish' : 'Next number',
+            onNext: () => nextTrial(_startTrial),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                _NumberRow(label: 'The number', value: _chunked(_target), color: Palette.green),
+                const SizedBox(height: 10),
+                _NumberRow(
+                  label: 'You typed',
+                  value: _entry.isEmpty ? '–' : _chunked(_entry),
+                  color: lastPassed ? Palette.green : Palette.red,
+                ),
+                const SizedBox(height: 14),
+                const InfoBanner(
+                  icon: Icons.tips_and_updates,
+                  color: Palette.blue,
+                  text: 'Groups of three are shown above. Try hearing each group as one "word".',
+                ),
+              ],
+            ),
+          ),
+        DrillPhase.summary => buildSummary(_startTrial),
+      },
+    );
+  }
+
+  Widget _buildStudy() {
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: <Widget>[
+          StudyTimer(
+            key: ValueKey<String>('study$trial$_target'),
+            duration: Duration(milliseconds: 1500 + 900 * _target.length),
+            color: drill.color,
+            onDone: () => setState(() => phase = DrillPhase.recall),
+          ),
+          const Spacer(),
+          const Text('MEMORIZE', style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800, letterSpacing: 2)),
+          const SizedBox(height: 12),
+          FittedBox(
+            child: Text(
+              _target,
+              style: const TextStyle(
+                color: Palette.textPrimary,
+                fontSize: 54,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 6,
+                fontFeatures: <ui.FontFeature>[ui.FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+          const Spacer(),
+          TextButton(
+            onPressed: () => setState(() => phase = DrillPhase.recall),
+            child: const Text("I'M READY", style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecall() {
+    const keys = <String>['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        children: <Widget>[
+          const Text('TYPE THE NUMBER', style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800, letterSpacing: 2)),
+          const SizedBox(height: 16),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 6,
+            runSpacing: 6,
+            children: <Widget>[
+              for (var i = 0; i < _target.length; i++)
+                Container(
+                  width: 30,
+                  height: 42,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: Palette.surface,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: i == _entry.length ? drill.color : Palette.border, width: 2),
+                  ),
+                  child: Text(
+                    i < _entry.length ? _entry[i] : '',
+                    style: const TextStyle(color: Palette.textPrimary, fontSize: 20, fontWeight: FontWeight.w900),
+                  ),
+                ),
+            ],
+          ),
+          const Spacer(),
+          for (var row = 0; row < 4; row++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: <Widget>[
+                  for (var col = 0; col < 3; col++) ...<Widget>[
+                    if (col > 0) const SizedBox(width: 10),
+                    Expanded(child: _KeypadKey(value: keys[row * 3 + col], color: drill.color, onTap: _press)),
+                  ],
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _KeypadKey extends StatelessWidget {
+  const _KeypadKey({required this.value, required this.color, required this.onTap});
+  final String value;
+  final Color color;
+  final ValueChanged<String> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget label = switch (value) {
+      'del' => const Icon(Icons.backspace_outlined, color: Palette.textPrimary),
+      'ok' => Icon(Icons.check, color: color, size: 28),
+      _ => Text(value, style: const TextStyle(color: Palette.textPrimary, fontSize: 26, fontWeight: FontWeight.w800)),
+    };
+    return Material(
+      color: Palette.surface,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => onTap(value),
+        child: SizedBox(height: 60, child: Center(child: label)),
+      ),
+    );
+  }
+}
+
+class _NumberRow extends StatelessWidget {
+  const _NumberRow({required this.label, required this.value, required this.color});
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Palette.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withAlpha(140), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(label.toUpperCase(), style: const TextStyle(color: Palette.textMuted, fontSize: 11.5, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(value, style: TextStyle(color: color, fontSize: 26, fontWeight: FontWeight.w900, letterSpacing: 2)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Story Chain (link method) ─────────────────────────────────────────────
+
+class StoryChainScreen extends StatefulWidget {
+  const StoryChainScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<StoryChainScreen> createState() => _StoryChainScreenState();
+}
+
+class _StoryChainScreenState extends State<StoryChainScreen> with DrillSession<StoryChainScreen> {
+  List<String> _target = <String>[];
+  List<String> _pool = <String>[];
+  final List<int> _picked = <int>[];
+  int _score = 0;
+
+  @override
+  GameState get game => widget.game;
+  @override
+  MemoryDrill get drill => MemoryDrill.words;
+  @override
+  int get totalTrials => 3;
+
+  @override
+  void initState() {
+    super.initState();
+    initSession();
+  }
+
+  void _startTrial() {
+    final bank = List<String>.of(MemoryContent.words)..shuffle(rng);
+    final n = level;
+    final decoys = math.min(6, math.max(3, n ~/ 2));
+    setState(() {
+      _target = bank.take(n).toList();
+      _pool = bank.take(n + decoys).toList()..shuffle(rng);
+      _picked.clear();
+      phase = DrillPhase.study;
+    });
+  }
+
+  void _tapWord(int index) {
+    if (phase != DrillPhase.recall || _picked.contains(index)) return;
+    HapticFeedback.selectionClick();
+    setState(() => _picked.add(index));
+    if (_picked.length == _target.length) _check();
+  }
+
+  void _check() {
+    var score = 0;
+    for (var i = 0; i < _target.length; i++) {
+      if (_pool[_picked[i]] == _target[i]) score++;
+    }
+    _score = score;
+    final n = _target.length;
+    final passed = score == n;
+    finishTrial(passed: passed, levelDelta: passed ? 1 : (score <= n - 3 ? -1 : 0), ip: score);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DrillScaffold(
+      drill: drill,
+      progress: progress,
+      label: '${drill.title.toUpperCase()} · ROUND ${math.min(trial + 1, totalTrials)}/$totalTrials',
+      child: switch (phase) {
+        DrillPhase.intro => DrillIntro(
+            drill: drill,
+            level: level,
+            tip: 'Link each word to the next in one crazy, vivid story. The weirder, the better.',
+            onStart: _startTrial,
+            onLearn: openLesson,
+          ),
+        DrillPhase.study || DrillPhase.blank => _buildStudy(),
+        DrillPhase.recall => _buildRecall(),
+        DrillPhase.feedback => DrillFeedback(
+            passed: lastPassed,
+            headline: lastPassed ? 'Perfect chain' : '$_score of ${_target.length} in place',
+            levelText: levelChangeText,
+            nextLabel: trial + 1 >= totalTrials ? 'Finish' : 'Next list',
+            onNext: () => nextTrial(_startTrial),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                for (var i = 0; i < _target.length; i++)
+                  _ResultLine(
+                    index: i + 1,
+                    expected: _target[i],
+                    given: _pool[_picked[i]],
+                  ),
+              ],
+            ),
+          ),
+        DrillPhase.summary => buildSummary(_startTrial),
+      },
+    );
+  }
+
+  Widget _buildStudy() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          StudyTimer(
+            key: ValueKey<String>('words$trial'),
+            duration: Duration(seconds: 4 + _target.length * 3),
+            color: drill.color,
+            onDone: () => setState(() => phase = DrillPhase.recall),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'BUILD A STORY IN THIS ORDER',
+            style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800, letterSpacing: 1.4),
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 10,
+                children: <Widget>[
+                  for (var i = 0; i < _target.length; i++)
+                    _WordChip(text: '${i + 1}. ${_target[i].toUpperCase()}', color: drill.color, filled: true),
+                ],
+              ),
+            ),
+          ),
+          ChunkyButton(
+            label: "I'm ready",
+            color: drill.color,
+            onPressed: () => setState(() => phase = DrillPhase.recall),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecall() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            'TAP THE WORDS IN ORDER · ${_picked.length}/${_target.length}',
+            style: const TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800, letterSpacing: 1.2),
+          ),
+          const SizedBox(height: 4),
+          const Text('Some of these are decoys.', style: TextStyle(color: Palette.textMuted, fontSize: 13)),
+          const SizedBox(height: 14),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 10,
+                children: <Widget>[
+                  for (var i = 0; i < _pool.length; i++)
+                    GestureDetector(
+                      onTap: () => _tapWord(i),
+                      child: _WordChip(
+                        text: _picked.contains(i)
+                            ? '${_picked.indexOf(i) + 1}. ${_pool[i].toUpperCase()}'
+                            : _pool[i].toUpperCase(),
+                        color: drill.color,
+                        filled: _picked.contains(i),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          OutlinedButton.icon(
+            onPressed: _picked.isEmpty ? null : () => setState(() => _picked.removeLast()),
+            icon: const Icon(Icons.undo),
+            label: const Text('Undo'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Palette.textPrimary,
+              minimumSize: const Size.fromHeight(48),
+              side: const BorderSide(color: Palette.border, width: 1.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WordChip extends StatelessWidget {
+  const _WordChip({required this.text, required this.color, required this.filled});
+  final String text;
+  final Color color;
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: filled ? color.withAlpha(60) : Palette.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: filled ? color : Palette.border, width: 2),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: filled ? Palette.textPrimary : Palette.textPrimary.withAlpha(230),
+          fontWeight: FontWeight.w800,
+          fontSize: 15,
+          letterSpacing: 0.6,
+        ),
+      ),
+    );
+  }
+}
+
+class _ResultLine extends StatelessWidget {
+  const _ResultLine({required this.index, required this.expected, required this.given});
+  final int index;
+  final String expected;
+  final String given;
+
+  @override
+  Widget build(BuildContext context) {
+    final ok = expected == given;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: <Widget>[
+          Icon(ok ? Icons.check_circle : Icons.cancel, color: ok ? Palette.green : Palette.red, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              ok ? '$index. $expected' : '$index. $expected  (you: $given)',
+              style: TextStyle(color: ok ? Palette.textPrimary : Palette.red, fontSize: 15.5, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Memory Palace (method of loci) ────────────────────────────────────────
+
+class MemoryPalaceScreen extends StatefulWidget {
+  const MemoryPalaceScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<MemoryPalaceScreen> createState() => _MemoryPalaceScreenState();
+}
+
+class _MemoryPalaceScreenState extends State<MemoryPalaceScreen> with DrillSession<MemoryPalaceScreen> {
+  List<PalaceStop> _items = <PalaceStop>[];
+  List<String> _prompts = <String>[];
+  int _studyIndex = 0;
+  List<bool> _results = <bool>[];
+  List<QuizQuestion> _questions = <QuizQuestion>[];
+
+  @override
+  GameState get game => widget.game;
+  @override
+  MemoryDrill get drill => MemoryDrill.palace;
+  @override
+  int get totalTrials => 2;
+
+  @override
+  void initState() {
+    super.initState();
+    initSession();
+  }
+
+  String _label(PalaceStop s) => '${s.emoji}  ${s.name}';
+
+  void _startTrial() {
+    final n = math.min(level, MemoryContent.palaceRoute.length);
+    final items = List<PalaceStop>.of(MemoryContent.palaceItems)..shuffle(rng);
+    final chosen = items.take(n).toList();
+    final prompts = <String>[
+      for (var i = 0; i < n; i++)
+        MemoryContent.palacePrompts[rng.nextInt(MemoryContent.palacePrompts.length)]
+            .replaceAll('{item}', chosen[i].name)
+            .replaceAll('{stop}', MemoryContent.palaceRoute[i].name),
+    ];
+    final extras = items.skip(n).take(4).map(_label).toList();
+    final sessionLabels = chosen.map(_label).toList();
+    final questions = <QuizQuestion>[
+      for (var i = 0; i < n; i++)
+        buildChoiceQuestion(
+          prompt: 'What was at the ${MemoryContent.palaceRoute[i].name}?',
+          visual: MemoryContent.palaceRoute[i].emoji,
+          answer: sessionLabels[i],
+          // Mostly other items from this walk, so you must know the position.
+          pool: <String>[...sessionLabels, ...extras],
+          rng: rng,
+        ),
+    ];
+    setState(() {
+      _items = chosen;
+      _prompts = prompts;
+      _questions = questions;
+      _studyIndex = 0;
+      phase = DrillPhase.study;
+    });
+  }
+
+  void _finish(List<bool> results) {
+    _results = results;
+    final score = results.where((r) => r).length;
+    final n = results.length;
+    final passed = score == n;
+    finishTrial(passed: passed, levelDelta: passed ? 1 : (score <= n - 3 ? -1 : 0), ip: score);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DrillScaffold(
+      drill: drill,
+      progress: progress,
+      label: '${drill.title.toUpperCase()} · WALK ${math.min(trial + 1, totalTrials)}/$totalTrials',
+      child: switch (phase) {
+        DrillPhase.intro => DrillIntro(
+            drill: drill,
+            level: level,
+            tip: 'Picture YOUR home. At each stop, make the item do something strange and vivid right there.',
+            onStart: _startTrial,
+            onLearn: openLesson,
+          ),
+        DrillPhase.study || DrillPhase.blank => _buildStudy(),
+        DrillPhase.recall => QuizRunner(
+            key: ValueKey<String>('palace$trial'),
+            questions: _questions,
+            color: drill.color,
+            onFinished: _finish,
+          ),
+        DrillPhase.feedback => DrillFeedback(
+            passed: lastPassed,
+            headline: lastPassed ? 'Every stop remembered' : '${_results.where((r) => r).length} of ${_results.length} stops',
+            levelText: levelChangeText,
+            nextLabel: trial + 1 >= totalTrials ? 'Finish' : 'Next walk',
+            onNext: () => nextTrial(_startTrial),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                for (var i = 0; i < _items.length; i++)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: <Widget>[
+                        Icon(
+                          i < _results.length && _results[i] ? Icons.check_circle : Icons.cancel,
+                          color: i < _results.length && _results[i] ? Palette.green : Palette.red,
+                          size: 22,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            '${MemoryContent.palaceRoute[i].emoji} ${MemoryContent.palaceRoute[i].name}  →  ${_label(_items[i])}',
+                            style: const TextStyle(color: Palette.textPrimary, fontSize: 15, fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        DrillPhase.summary => buildSummary(_startTrial),
+      },
+    );
+  }
+
+  Widget _buildStudy() {
+    final stop = MemoryContent.palaceRoute[_studyIndex];
+    final item = _items[_studyIndex];
+    final last = _studyIndex + 1 >= _items.length;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+      child: Column(
+        children: <Widget>[
+          Text(
+            'STOP ${_studyIndex + 1} OF ${_items.length}',
+            style: TextStyle(color: drill.color, fontWeight: FontWeight.w800, letterSpacing: 1.6),
+          ),
+          const Spacer(),
+          Text(stop.emoji, style: const TextStyle(fontSize: 54)),
+          Text(
+            stop.name.toUpperCase(),
+            style: const TextStyle(color: Palette.textMuted, fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 2),
+          ),
+          const SizedBox(height: 18),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 250),
+            transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: child),
+            child: Column(
+              key: ValueKey<int>(_studyIndex),
+              children: <Widget>[
+                Text(item.emoji, style: const TextStyle(fontSize: 96)),
+                Text(
+                  item.name.toUpperCase(),
+                  style: const TextStyle(color: Palette.textPrimary, fontSize: 28, fontWeight: FontWeight.w900),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          InfoBanner(icon: Icons.auto_awesome, color: drill.color, text: _prompts[_studyIndex]),
+          const Spacer(),
+          ChunkyButton(
+            label: last ? 'Walk it back' : 'Next stop',
+            color: drill.color,
+            onPressed: () {
+              if (last) {
+                setState(() => phase = DrillPhase.recall);
+              } else {
+                setState(() => _studyIndex++);
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Names & Faces ─────────────────────────────────────────────────────────
+
+class _Person {
+  const _Person(this.face, this.name, this.job, this.detail);
+  final String face;
+  final String name;
+  final String job;
+  final String detail;
+}
+
+class NamesFacesScreen extends StatefulWidget {
+  const NamesFacesScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<NamesFacesScreen> createState() => _NamesFacesScreenState();
+}
+
+class _NamesFacesScreenState extends State<NamesFacesScreen> with DrillSession<NamesFacesScreen> {
+  List<_Person> _people = <_Person>[];
+  List<QuizQuestion> _questions = <QuizQuestion>[];
+  int _studyIndex = 0;
+  int _score = 0;
+
+  @override
+  GameState get game => widget.game;
+  @override
+  MemoryDrill get drill => MemoryDrill.faces;
+  @override
+  int get totalTrials => 2;
+
+  @override
+  void initState() {
+    super.initState();
+    initSession();
+  }
+
+  void _startTrial() {
+    final n = level;
+    final faces = List<String>.of(MemoryContent.faces)..shuffle(rng);
+    final names = List<String>.of(MemoryContent.names)..shuffle(rng);
+    final jobs = List<String>.of(MemoryContent.jobs)..shuffle(rng);
+    final details = List<String>.of(MemoryContent.details)..shuffle(rng);
+    final people = <_Person>[for (var i = 0; i < n; i++) _Person(faces[i], names[i], jobs[i], details[i])];
+
+    final sessionNames = people.map((p) => p.name).toList();
+    final sessionDetails = people.map((p) => p.detail).toList();
+    final order = List<_Person>.of(people)..shuffle(rng);
+    final detailOrder = List<_Person>.of(people)..shuffle(rng);
+    final questions = <QuizQuestion>[
+      for (final p in order)
+        buildChoiceQuestion(
+          prompt: 'What\'s this ${p.job}\'s name?',
+          visual: p.face,
+          answer: p.name,
+          pool: <String>[...sessionNames, ...names.skip(n).take(4)],
+          rng: rng,
+        ),
+      for (final p in detailOrder)
+        buildChoiceQuestion(
+          prompt: 'What did you learn about ${p.name}?',
+          visual: p.face,
+          answer: p.detail,
+          pool: <String>[...sessionDetails, ...details.skip(n).take(4)],
+          rng: rng,
+        ),
+    ];
+    setState(() {
+      _people = people;
+      _questions = questions;
+      _studyIndex = 0;
+      phase = DrillPhase.study;
+    });
+  }
+
+  void _finish(List<bool> results) {
+    _score = results.where((r) => r).length;
+    final total = results.length;
+    final passed = _score == total;
+    finishTrial(passed: passed, levelDelta: passed ? 1 : (_score <= total - 3 ? -1 : 0), ip: _score);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DrillScaffold(
+      drill: drill,
+      progress: progress,
+      label: '${drill.title.toUpperCase()} · ROUND ${math.min(trial + 1, totalTrials)}/$totalTrials',
+      child: switch (phase) {
+        DrillPhase.intro => DrillIntro(
+            drill: drill,
+            level: level,
+            tip: 'Say each name in your head, then hook it to an image tied to their face, job or detail.',
+            onStart: _startTrial,
+            onLearn: openLesson,
+          ),
+        DrillPhase.study || DrillPhase.blank => _buildStudy(),
+        DrillPhase.recall => QuizRunner(
+            key: ValueKey<String>('faces$trial'),
+            questions: _questions,
+            color: drill.color,
+            onFinished: _finish,
+          ),
+        DrillPhase.feedback => DrillFeedback(
+            passed: lastPassed,
+            headline: lastPassed ? 'Never forget a face' : '$_score of ${_questions.length} right',
+            levelText: levelChangeText,
+            nextLabel: trial + 1 >= totalTrials ? 'Finish' : 'Meet new people',
+            onNext: () => nextTrial(_startTrial),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                for (final p in _people)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(
+                      children: <Widget>[
+                        Text(p.face, style: const TextStyle(fontSize: 34)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            '${p.name}, ${p.job}\n${p.detail}',
+                            style: const TextStyle(color: Palette.textPrimary, fontSize: 14.5, height: 1.35),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        DrillPhase.summary => buildSummary(_startTrial),
+      },
+    );
+  }
+
+  Widget _buildStudy() {
+    final p = _people[_studyIndex];
+    final last = _studyIndex + 1 >= _people.length;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+      child: Column(
+        children: <Widget>[
+          Text(
+            'PERSON ${_studyIndex + 1} OF ${_people.length}',
+            style: TextStyle(color: drill.color, fontWeight: FontWeight.w800, letterSpacing: 1.6),
+          ),
+          const Spacer(),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 250),
+            transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
+            child: Column(
+              key: ValueKey<int>(_studyIndex),
+              children: <Widget>[
+                Text(p.face, style: const TextStyle(fontSize: 110)),
+                const SizedBox(height: 8),
+                Text(
+                  '"Hi, I\'m ${p.name}."',
+                  style: const TextStyle(color: Palette.textPrimary, fontSize: 28, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'I work as a ${p.job}.',
+                  style: const TextStyle(color: Palette.textMuted, fontSize: 17, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Palette.surface,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: drill.color.withAlpha(140)),
+                  ),
+                  child: Text(
+                    '${p.name} ${p.detail}.',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Palette.textPrimary, fontSize: 16, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          InfoBanner(
+            icon: Icons.auto_awesome,
+            color: drill.color,
+            text: 'Hook it: link "${p.name}" to something you can see, then hang "${p.detail}" on the same picture.',
+          ),
+          const Spacer(),
+          ChunkyButton(
+            label: last ? 'Test me' : 'Next person',
+            color: drill.color,
+            onPressed: () {
+              if (last) {
+                setState(() => phase = DrillPhase.recall);
+              } else {
+                setState(() => _studyIndex++);
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Kim's Game (visual attention) ─────────────────────────────────────────
+
+class KimsGameScreen extends StatefulWidget {
+  const KimsGameScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<KimsGameScreen> createState() => _KimsGameScreenState();
+}
+
+class _KimsGameScreenState extends State<KimsGameScreen> with DrillSession<KimsGameScreen> {
+  static const List<int> _sizes = <int>[4, 6, 9, 12, 16, 20];
+  static const List<int> _columns = <int>[2, 3, 3, 4, 4, 5];
+  static const List<int> _studySeconds = <int>[6, 8, 10, 12, 15, 18];
+
+  List<String> _grid = <String>[];
+  int _target = 0;
+  String _replacement = '';
+  bool _missingMode = false;
+  List<String> _options = <String>[];
+
+  @override
+  GameState get game => widget.game;
+  @override
+  MemoryDrill get drill => MemoryDrill.kim;
+  @override
+  int get totalTrials => 4;
+
+  int get _tier => (level - 1).clamp(0, _sizes.length - 1);
+
+  @override
+  void initState() {
+    super.initState();
+    initSession();
+  }
+
+  void _startTrial() {
+    final pool = List<String>.of(MemoryContent.kimItems)..shuffle(rng);
+    final size = _sizes[_tier];
+    final grid = pool.take(size).toList();
+    final outside = pool.skip(size).toList();
+    final target = rng.nextInt(size);
+    setState(() {
+      _grid = grid;
+      _target = target;
+      _missingMode = trial.isOdd;
+      _replacement = outside.first;
+      _options = <String>[grid[target], ...outside.skip(1).take(3)]..shuffle(rng);
+      phase = DrillPhase.study;
+    });
+  }
+
+  void _toBlank() {
+    setState(() => phase = DrillPhase.blank);
+    Future<void>.delayed(const Duration(milliseconds: 1200), () {
+      if (mounted && phase == DrillPhase.blank) setState(() => phase = DrillPhase.recall);
+    });
+  }
+
+  void _pickTile(int index) {
+    if (phase != DrillPhase.recall || _missingMode) return;
+    final passed = index == _target;
+    finishTrial(passed: passed, levelDelta: passed ? 1 : -1, ip: passed ? 3 : 0);
+  }
+
+  void _pickOption(int index) {
+    if (phase != DrillPhase.recall || !_missingMode) return;
+    final passed = _options[index] == _grid[_target];
+    finishTrial(passed: passed, levelDelta: passed ? 1 : -1, ip: passed ? 3 : 0);
+  }
+
+  Widget _gridView({required List<String> cells, int? highlight, Color? highlightColor, ValueChanged<int>? onTap}) {
+    final cols = _columns[_tier];
+    return GridView.count(
+      crossAxisCount: cols,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 8,
+      crossAxisSpacing: 8,
+      children: <Widget>[
+        for (var i = 0; i < cells.length; i++)
+          GestureDetector(
+            onTap: onTap == null ? null : () => onTap(i),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Palette.surface,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: i == highlight ? (highlightColor ?? drill.color) : Palette.border, width: 2.5),
+              ),
+              alignment: Alignment.center,
+              child: FittedBox(
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Text(cells[i], style: const TextStyle(fontSize: 40)),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DrillScaffold(
+      drill: drill,
+      progress: progress,
+      label: '${drill.title.toUpperCase()} · ROUND ${math.min(trial + 1, totalTrials)}/$totalTrials',
+      child: switch (phase) {
+        DrillPhase.intro => DrillIntro(
+            drill: drill,
+            level: level,
+            tip: 'Sweep row by row and name each item in your head. Look for patterns: animals, food, round things.',
+            onStart: _startTrial,
+            onLearn: openLesson,
+          ),
+        DrillPhase.study => _buildStudy(),
+        DrillPhase.blank => const Center(
+            child: Text(
+              '👀  Look away…',
+              style: TextStyle(color: Palette.textMuted, fontSize: 22, fontWeight: FontWeight.w800),
+            ),
+          ),
+        DrillPhase.recall => _buildRecall(),
+        DrillPhase.feedback => DrillFeedback(
+            passed: lastPassed,
+            headline: lastPassed ? 'Sharp eyes' : 'Missed it',
+            levelText: levelChangeText,
+            nextLabel: trial + 1 >= totalTrials ? 'Finish' : 'Next grid',
+            onNext: () => nextTrial(_startTrial),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Text(
+                  _missingMode
+                      ? 'The missing item was ${_grid[_target]}.'
+                      : 'The ${_grid[_target]} was swapped for $_replacement.',
+                  style: const TextStyle(color: Palette.textPrimary, fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 12),
+                _gridView(cells: _grid, highlight: _target, highlightColor: Palette.green),
+              ],
+            ),
+          ),
+        DrillPhase.summary => buildSummary(_startTrial),
+      },
+    );
+  }
+
+  Widget _buildStudy() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          StudyTimer(
+            key: ValueKey<String>('kim$trial'),
+            duration: Duration(seconds: _studySeconds[_tier]),
+            color: drill.color,
+            onDone: _toBlank,
+          ),
+          const SizedBox(height: 14),
+          const Text('MEMORIZE THE GRID', style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800, letterSpacing: 1.6)),
+          const SizedBox(height: 12),
+          Expanded(child: SingleChildScrollView(child: _gridView(cells: _grid))),
+          const SizedBox(height: 12),
+          ChunkyButton(label: "I'm ready", color: drill.color, onPressed: _toBlank),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecall() {
+    if (!_missingMode) {
+      final changed = List<String>.of(_grid)..[_target] = _replacement;
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            const Text(
+              'One item changed. Tap it.',
+              style: TextStyle(color: Palette.textPrimary, fontSize: 21, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 14),
+            Expanded(child: SingleChildScrollView(child: _gridView(cells: changed, onTap: _pickTile))),
+          ],
+        ),
+      );
+    }
+    final hidden = List<String>.of(_grid)..[_target] = '❔';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const Text(
+            'What was in the ❔ spot?',
+            style: TextStyle(color: Palette.textPrimary, fontSize: 21, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 12),
+          Expanded(child: SingleChildScrollView(child: _gridView(cells: hidden, highlight: _target))),
+          const SizedBox(height: 12),
+          Row(
+            children: <Widget>[
+              for (var i = 0; i < _options.length; i++) ...<Widget>[
+                if (i > 0) const SizedBox(width: 8),
+                Expanded(
+                  child: Material(
+                    color: Palette.surface,
+                    borderRadius: BorderRadius.circular(14),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () => _pickOption(i),
+                      child: SizedBox(
+                        height: 64,
+                        child: Center(child: Text(_options[i], style: const TextStyle(fontSize: 34))),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Person Snapshot (observation recall) ──────────────────────────────────
+
+class SnapshotScreen extends StatefulWidget {
+  const SnapshotScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<SnapshotScreen> createState() => _SnapshotScreenState();
+}
+
+class _SnapshotScreenState extends State<SnapshotScreen> with DrillSession<SnapshotScreen> {
+  static const List<int> _studySeconds = <int>[30, 24, 20, 16, 13, 10];
+
+  final List<int> _order = <int>[];
+  SnapshotCase? _case;
+  List<QuizQuestion> _questions = <QuizQuestion>[];
+  int _score = 0;
+
+  @override
+  GameState get game => widget.game;
+  @override
+  MemoryDrill get drill => MemoryDrill.snapshot;
+  @override
+  int get totalTrials => 2;
+
+  @override
+  void initState() {
+    super.initState();
+    initSession();
+    _order.addAll(List<int>.generate(MemoryContent.snapshots.length, (i) => i)..shuffle(rng));
+  }
+
+  void _startTrial() {
+    if (_order.isEmpty) {
+      _order.addAll(List<int>.generate(MemoryContent.snapshots.length, (i) => i)..shuffle(rng));
+    }
+    final snap = MemoryContent.snapshots[_order.removeLast()];
+    final questions = <QuizQuestion>[
+      for (final q in snap.questions)
+        buildChoiceQuestion(prompt: q.question, answer: q.options.first, pool: q.options, rng: rng, note: q.explain),
+    ];
+    setState(() {
+      _case = snap;
+      _questions = questions;
+      phase = DrillPhase.study;
+    });
+  }
+
+  void _finish(List<bool> results) {
+    _score = results.where((r) => r).length;
+    final passed = _score == results.length;
+    finishTrial(passed: passed, levelDelta: passed ? 1 : (_score <= 1 ? -1 : 0), ip: _score * 2);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DrillScaffold(
+      drill: drill,
+      progress: progress,
+      label: '${drill.title.toUpperCase()} · CASE ${math.min(trial + 1, totalTrials)}/$totalTrials',
+      child: switch (phase) {
+        DrillPhase.intro => DrillIntro(
+            drill: drill,
+            level: level,
+            tip: 'Scan head to toe in the same order every time: face → hands → clothes → shoes → objects.',
+            onStart: _startTrial,
+            onLearn: openLesson,
+          ),
+        DrillPhase.study || DrillPhase.blank => _buildStudy(),
+        DrillPhase.recall => QuizRunner(
+            key: ValueKey<String>('snap$trial'),
+            questions: _questions,
+            color: drill.color,
+            onFinished: _finish,
+          ),
+        DrillPhase.feedback => DrillFeedback(
+            passed: lastPassed,
+            headline: lastPassed ? 'Nothing got past you' : '$_score of ${_questions.length} right',
+            levelText: levelChangeText,
+            nextLabel: trial + 1 >= totalTrials ? 'Finish' : 'Next case',
+            onNext: () => nextTrial(_startTrial),
+            child: ContextCard(
+              label: 'THE SNAPSHOT · ${_case!.place.toUpperCase()}',
+              icon: Icons.visibility,
+              text: _case!.text,
+              accent: drill.color,
+            ),
+          ),
+        DrillPhase.summary => buildSummary(_startTrial),
+      },
+    );
+  }
+
+  Widget _buildStudy() {
+    final snap = _case!;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          StudyTimer(
+            key: ValueKey<String>('snapStudy$trial'),
+            duration: Duration(seconds: _studySeconds[(level - 1).clamp(0, _studySeconds.length - 1)]),
+            color: drill.color,
+            onDone: () => setState(() => phase = DrillPhase.recall),
+          ),
+          const SizedBox(height: 14),
+          Expanded(
+            child: SingleChildScrollView(
+              child: ContextCard(
+                label: 'SNAPSHOT · ${snap.place.toUpperCase()}',
+                icon: Icons.visibility,
+                text: snap.text,
+                accent: drill.color,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          ChunkyButton(
+            label: "I'm ready",
+            color: drill.color,
+            onPressed: () => setState(() => phase = DrillPhase.recall),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Spaced Review (retrieval + spacing) ───────────────────────────────────
+
+class SpacedReviewScreen extends StatefulWidget {
+  const SpacedReviewScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<SpacedReviewScreen> createState() => _SpacedReviewScreenState();
+}
+
+class _SpacedReviewScreenState extends State<SpacedReviewScreen> {
+  late final List<StudyCard> _queue = widget.game.memory.reviewQueue(dayIndex());
+  late final int _initialCount = _queue.length;
+  final Set<String> _requeued = <String>{};
+  int _index = 0;
+  bool _revealed = false;
+  int _knew = 0;
+  bool _finished = false;
+  bool _streakExtended = false;
+
+  MemoryDrill get drill => MemoryDrill.review;
+
+  void _rate(bool knew) {
+    final card = _queue[_index];
+    widget.game.reviewCard(card.id, knew: knew);
+    if (knew) {
+      _knew++;
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+      if (_requeued.add(card.id)) _queue.add(card); // one more try this session
+    }
+    setState(() {
+      _index++;
+      _revealed = false;
+      if (_index >= _queue.length) {
+        _finished = true;
+        _streakExtended = widget.game.completeMemorySession(drill);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget body;
+    if (_queue.isEmpty) {
+      body = _buildCaughtUp();
+    } else if (_finished) {
+      body = DrillSummary(
+        drill: drill,
+        passed: _knew,
+        total: _queue.length,
+        ip: _knew,
+        startLevel: 0,
+        endLevel: 0,
+        streakExtended: _streakExtended,
+        onAgain: () => Navigator.of(context).maybePop(),
+      );
+    } else {
+      body = _buildCard();
+    }
+    return DrillScaffold(
+      drill: drill,
+      progress: _queue.isEmpty ? 1 : _index / _queue.length,
+      label: _queue.isEmpty || _finished
+          ? drill.title.toUpperCase()
+          : '${drill.title.toUpperCase()} · CARD ${_index + 1}/${_queue.length}',
+      child: body,
+    );
+  }
+
+  Widget _buildCaughtUp() {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: <Widget>[
+          const Spacer(),
+          const Text('✅', style: TextStyle(fontSize: 72)),
+          const SizedBox(height: 12),
+          const Text(
+            'All caught up',
+            style: TextStyle(color: Palette.textPrimary, fontSize: 26, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'No cards are due right now. Come back tomorrow: the spacing is what makes it stick.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Palette.textMuted, fontSize: 15, height: 1.4),
+          ),
+          const Spacer(),
+          ChunkyButton(label: 'Back', color: drill.color, onPressed: () => Navigator.of(context).maybePop()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCard() {
+    final card = _queue[_index];
+    final isNew = !widget.game.memory.cards.containsKey(card.id);
+    final second = _index >= _initialCount;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            second ? 'ONE MORE TRY' : (isNew ? 'NEW CARD' : 'REVIEW'),
+            style: TextStyle(color: drill.color, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2),
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Palette.surface,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: drill.color.withAlpha(140), width: 2),
+                    ),
+                    child: Text(
+                      card.front,
+                      style: const TextStyle(color: Palette.textPrimary, fontSize: 21, fontWeight: FontWeight.w800, height: 1.3),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  AnimatedCrossFade(
+                    duration: const Duration(milliseconds: 220),
+                    crossFadeState: _revealed ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+                    firstChild: const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Text(
+                        'Answer it in your head first, then flip.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Palette.textMuted, fontSize: 14),
+                      ),
+                    ),
+                    secondChild: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(18),
+                      decoration: BoxDecoration(
+                        color: drill.color.withAlpha(30),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: drill.color.withAlpha(120)),
+                      ),
+                      child: Text(
+                        card.back,
+                        style: const TextStyle(color: Palette.textPrimary, fontSize: 16.5, height: 1.45),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (!_revealed)
+            ChunkyButton(label: 'Show answer', color: drill.color, onPressed: () => setState(() => _revealed = true))
+          else
+            Row(
+              children: <Widget>[
+                Expanded(child: ChunkyButton(label: 'Missed it', color: Palette.red, onPressed: () => _rate(false))),
+                const SizedBox(width: 12),
+                Expanded(child: ChunkyButton(label: 'Knew it', color: Palette.green, onPressed: () => _rate(true))),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Technique lessons ─────────────────────────────────────────────────────
+
+class MemoryLessonScreen extends StatefulWidget {
+  const MemoryLessonScreen({super.key, required this.game, required this.drill});
+  final GameState game;
+  final MemoryDrill drill;
+
+  @override
+  State<MemoryLessonScreen> createState() => _MemoryLessonScreenState();
+}
+
+class _MemoryLessonScreenState extends State<MemoryLessonScreen> {
+  final PageController _pages = PageController();
+  int _page = 0;
+
+  List<LessonPage> get _content => MemoryContent.lessons[widget.drill] ?? const <LessonPage>[];
+
+  @override
+  void dispose() {
+    _pages.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final drill = widget.drill;
+    final pages = _content;
+    final last = _page >= pages.length - 1;
+    return DrillScaffold(
+      drill: drill,
+      progress: pages.isEmpty ? 1 : (_page + 1) / pages.length,
+      label: '${drill.title.toUpperCase()} · ${drill.technique.toUpperCase()}',
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: Column(
+          children: <Widget>[
+            Expanded(
+              child: PageView(
+                controller: _pages,
+                onPageChanged: (i) => setState(() => _page = i),
+                children: <Widget>[
+                  for (final page in pages)
+                    SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: <Widget>[
+                          const SizedBox(height: 12),
+                          Icon(drill.icon, color: drill.color, size: 48),
+                          const SizedBox(height: 14),
+                          Text(
+                            page.title,
+                            style: const TextStyle(color: Palette.textPrimary, fontSize: 25, fontWeight: FontWeight.w900, height: 1.2),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            page.body,
+                            style: const TextStyle(color: Palette.textPrimary, fontSize: 16.5, height: 1.5),
+                          ),
+                          if (page.example != null) ...<Widget>[
+                            const SizedBox(height: 16),
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: drill.color.withAlpha(30),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: drill.color.withAlpha(130)),
+                              ),
+                              child: Text(
+                                page.example!,
+                                style: TextStyle(color: drill.color, fontSize: 16, fontWeight: FontWeight.w800, height: 1.4),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                for (var i = 0; i < pages.length; i++)
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+                    width: i == _page ? 22 : 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: i == _page ? drill.color : Palette.border,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+              ],
+            ),
+            ChunkyButton(
+              label: last ? 'Practice now' : 'Next',
+              color: drill.color,
+              onPressed: () {
+                if (last) {
+                  openMemoryDrill(context, widget.game, drill, replace: true);
+                } else {
+                  _pages.nextPage(duration: const Duration(milliseconds: 280), curve: Curves.easeOutCubic);
+                }
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
