@@ -655,6 +655,9 @@ class Curriculum {
     ),
   ];
 
+  /// Fixed questions by id (used to replay saved mistakes).
+  static final Map<String, Challenge> byId = <String, Challenge>{for (final c in challenges) c.id: c};
+
   static final List<Challenge> challenges = <Challenge>[
     // ── LEVEL 1 · THE BASELINE ─────────────────────────────────────────────
     Challenge.baseline(
@@ -2436,6 +2439,66 @@ class GameState extends ChangeNotifier {
   /// Memory Gym progress, saved with everything else.
   final MemoryState memory = MemoryState();
 
+  /// Practice hub: best scores, questions to review, daily case.
+  final Map<String, int> practiceBest = <String, int>{};
+  final Set<String> mistakes = <String>{};
+  int? dailyDoneDay;
+
+  int get highestUnlockedLevel => Curriculum.nodes[math.min(unlockedIndex, Curriculum.nodes.length - 1)].level;
+
+  void _trackMistake(Challenge c, bool correct) {
+    if (!Curriculum.byId.containsKey(c.id)) return; // generated cases can't be replayed
+    if (correct) {
+      mistakes.remove(c.id);
+    } else {
+      mistakes.add(c.id);
+    }
+  }
+
+  /// Practice answers train the profile and earn IP, but never cost hearts.
+  void recordPractice(Challenge c, {required bool correct, required int ip}) {
+    totalAnswered++;
+    flagAttempts[c.flag] = flagAttempts[c.flag]! + 1;
+    _recentResults.add(correct);
+    if (_recentResults.length > rollingWindow) _recentResults.removeAt(0);
+    if (correct) {
+      totalCorrect++;
+    } else {
+      flagMisses[c.flag] = flagMisses[c.flag]! + 1;
+      typeMisses[c.type] = typeMisses[c.type]! + 1;
+    }
+    insightPoints += ip;
+    _trackMistake(c, correct);
+    _changed();
+  }
+
+  /// Returns true for a new personal best.
+  bool reportPracticeScore(String key, int value) {
+    if (value <= (practiceBest[key] ?? 0)) return false;
+    practiceBest[key] = value;
+    _changed();
+    return true;
+  }
+
+  /// Returns true if today's bonus was awarded.
+  bool completeDaily(int bonus) {
+    _touchStreak();
+    final today = dayIndex();
+    if (dailyDoneDay == today) {
+      _changed();
+      return false;
+    }
+    dailyDoneDay = today;
+    insightPoints += bonus;
+    _changed();
+    return true;
+  }
+
+  void touchPracticeStreak() {
+    _touchStreak();
+    _changed();
+  }
+
   static const int maxHearts = 3;
   static const Duration heartRegenInterval = Duration(minutes: 2);
   static const int refillCost = 30;
@@ -2539,6 +2602,7 @@ class GameState extends ChangeNotifier {
       if (hearts > 0) hearts--;
       _nextHeartAt ??= DateTime.now().add(heartRegenInterval);
     }
+    _trackMistake(challenge, correct);
     _changed();
     return gain;
   }
@@ -2634,6 +2698,9 @@ class GameState extends ChangeNotifier {
         'typeMisses': <String, int>{for (final e in typeMisses.entries) e.key.name: e.value},
         'nextHeart': _nextHeartAt?.millisecondsSinceEpoch,
         'memory': memory.toJson(),
+        'practiceBest': practiceBest,
+        'mistakes': mistakes.toList(),
+        'dailyDone': dailyDoneDay,
       };
 
   @visibleForTesting
@@ -2664,6 +2731,11 @@ class GameState extends ChangeNotifier {
       if (next is int && hearts < maxHearts) _nextHeartAt = DateTime.fromMillisecondsSinceEpoch(next);
       final mem = data['memory'];
       if (mem is Map<String, dynamic>) memory.restore(mem);
+      _readCounts(data['practiceBest'], practiceBest, <String, String>{for (final m in PracticeMode.values) m.name: m.name});
+      final saved = data['mistakes'];
+      if (saved is List) mistakes.addAll(saved.whereType<String>().where(Curriculum.byId.containsKey));
+      final daily = data['dailyDone'];
+      dailyDoneDay = daily is int ? daily : null;
     } catch (_) {
       // A damaged save keeps whatever loaded cleanly; the rest stays default.
     }
@@ -2750,12 +2822,18 @@ class QuestSession {
     }
   }
 
-  /// Difficulty scaling: if the player is above 80% accuracy, swap the
+  /// Difficulty scaling: if the player is above 70% accuracy, swap the
   /// upcoming standard question for a High Cognitive Load variant of the same
   /// level (same flag when possible). Returns true if a swap happened.
   bool escalateCurrentIfNeeded(GameState game, math.Random rng) {
     final item = current;
     if (item.isRetry || item.challenge.highLoad || !game.highLoadActive) return false;
+
+    if (item.challenge.type == ChallengeType.baseline) {
+      queue[position] = QuestItem(BaselineGenerator.generate(rng, hard: true, focus: item.challenge.flag).shuffled(rng));
+      highLoadServed++;
+      return true;
+    }
 
     final candidates = Curriculum.challenges
         .where((c) => c.highLoad && c.level == item.challenge.level && !usedIds.contains(c.id))
@@ -2782,7 +2860,7 @@ class QuestBuilder {
       final pool = Curriculum.challenges.where((c) => !c.highLoad && c.level == node.level).toList()..shuffle(rng);
       return QuestSession(
         nodeIndex: nodeIndex,
-        items: pool.take(node.questLength).map((c) => QuestItem(c.shuffled(rng))).toList(),
+        items: pool.take(node.questLength).map((c) => QuestItem(BaselineGenerator.live(c, rng).shuffled(rng))).toList(),
       );
     }
 
@@ -2808,7 +2886,7 @@ class QuestBuilder {
 
     return QuestSession(
       nodeIndex: nodeIndex,
-      items: picks.map((c) => QuestItem(c.shuffled(rng))).toList(),
+      items: picks.map((c) => QuestItem(BaselineGenerator.live(c, rng).shuffled(rng))).toList(),
       calibratedFlag: focus,
     );
   }
@@ -2907,6 +2985,7 @@ class _HomeShellState extends State<HomeShell> {
         index: _tab,
         children: <Widget>[
           MindTreeScreen(game: widget.game),
+          PracticeHubScreen(game: widget.game),
           MemoryGymScreen(game: widget.game),
         ],
       ),
@@ -2921,6 +3000,11 @@ class _HomeShellState extends State<HomeShell> {
             icon: Icon(Icons.psychology_outlined),
             selectedIcon: Icon(Icons.psychology),
             label: 'Cold Reading',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.bolt_outlined),
+            selectedIcon: Icon(Icons.bolt),
+            label: 'Practice',
           ),
           NavigationDestination(
             icon: Icon(Icons.lightbulb_outline),
@@ -4917,12 +5001,14 @@ class FeedbackSheet extends StatelessWidget {
     required this.ipGain,
     required this.heartsLeft,
     required this.onContinue,
+    this.practice = false,
   });
 
   final bool correct;
   final Challenge challenge;
   final int ipGain;
   final int heartsLeft;
+  final bool practice;
   final VoidCallback onContinue;
 
   @override
@@ -4959,7 +5045,7 @@ class FeedbackSheet extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(color: Colors.white.withAlpha(45), borderRadius: BorderRadius.circular(12)),
                   child: Text(
-                    correct ? '+$ipGain IP' : '−1 ❤️',
+                    correct ? '+$ipGain IP' : (practice ? 'No heart lost' : '−1 ❤️'),
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 14),
                   ),
                 ),
@@ -5001,7 +5087,7 @@ class FeedbackSheet extends StatelessWidget {
                 ),
               ),
             ),
-            if (!correct) ...<Widget>[
+            if (!correct && !practice) ...<Widget>[
               const SizedBox(height: 10),
               Text(
                 heartsLeft > 0
@@ -8254,6 +8340,862 @@ class _MemoryLessonScreenState extends State<MemoryLessonScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  BASELINE CASE GENERATOR
+//  Every option shows a tell; the baseline decides which ones are normal.
+// ════════════════════════════════════════════════════════════════════════════
+
+class _Behavior {
+  const _Behavior(this.id, this.habit, this.moment, this.flag, this.meaning, [this.group]);
+  final String id;
+
+  /// How it reads in the baseline profile ("rubs the back of the neck while talking").
+  final String habit;
+
+  /// How it reads in a moment ("rubs the back of the neck"). Identical wording
+  /// whether it's a habit or the anomaly, so only the baseline tells them apart.
+  final String moment;
+  final Flag flag;
+  final String meaning;
+
+  /// Behaviors in the same group can't both be habits (e.g. fast vs. slow).
+  final String? group;
+}
+
+class _CaseFile {
+  const _CaseFile(this.incident, this.accusation, this.denial, this.topics);
+  final String incident;
+  final String accusation;
+  final String denial;
+  final List<List<String>> topics; // [question, answer]
+}
+
+class _Cause {
+  const _Cause(this.event, this.reaction);
+  final String event;
+  final String reaction;
+}
+
+class BaselineGenerator {
+  BaselineGenerator._();
+
+  static const List<_Behavior> _behaviors = <_Behavior>[
+    _Behavior('neck', 'rubs the back of the neck while talking', 'rubs the back of the neck', Flag.pacifying,
+        'Neck rubbing is a pacifier: the brain soothing itself after a stressor.'),
+    _Behavior('collar', 'tugs at the collar every few minutes', 'tugs at the collar', Flag.pacifying,
+        'Collar tugging vents built-up stress, a classic pacifier.'),
+    _Behavior('eyes', 'rubs the eyes a lot (dry contacts)', 'rubs the eyes', Flag.ocularShift,
+        'Eye rubbing can be eye blocking: shutting out something unwelcome.'),
+    _Behavior('blink', 'blinks fast, in little bursts', 'blinks in a quick burst', Flag.ocularShift,
+        'Blink-rate surges often follow a stressful question.'),
+    _Behavior('lookAway', 'looks away while thinking', 'looks away before answering', Flag.ocularShift,
+        'Breaking eye contact on one topic, in someone who usually holds it, marks a hot spot.', 'gaze'),
+    _Behavior('stare', 'holds steady, unbroken eye contact', 'holds unbroken eye contact', Flag.ocularShift,
+        'A sudden fixed stare can be overcompensation: trying hard to look honest.', 'gaze'),
+    _Behavior('still', 'keeps both hands completely still', 'keeps both hands completely still', Flag.gestureShift,
+        'Hands freezing signals heavy thinking or the freeze response.', 'hands'),
+    _Behavior('gesture', 'talks with big hand gestures', 'gestures widely', Flag.gestureShift,
+        'Sudden animated gesturing from a still person can be a performance.', 'hands'),
+    _Behavior('lips', 'presses the lips together between sentences', 'presses the lips together', Flag.pacifying,
+        'Lip compression shows someone holding something back.'),
+    _Behavior('throat', 'clears the throat often', 'clears the throat', Flag.vocalShift,
+        'Throat clearing is a common stress response in the voice.'),
+    _Behavior('knee', 'bounces a knee constantly', 'bounces a knee', Flag.postureShift,
+        'Restless legs starting on one topic signal rising tension.'),
+    _Behavior('door', 'keeps the feet pointed toward the door', 'feet point toward the door', Flag.postureShift,
+        'Feet pointing at the exit show a wish to leave the topic.'),
+    _Behavior('lean', 'leans back with arms crossed', 'leans back with arms crossed', Flag.postureShift,
+        'Leaning away and crossing the arms puts distance between them and the topic.'),
+    _Behavior('pause', 'pauses a few seconds before every answer', 'pauses a few seconds first', Flag.vocalShift,
+        'A sudden delay means the answer is being built, not remembered.', 'tempo'),
+    _Behavior('fast', 'answers instantly, talking fast', 'answers instantly, talking fast', Flag.vocalShift,
+        'A sudden rush from a careful speaker can be a rehearsed line.', 'tempo'),
+    _Behavior('pitch', 'speaks in a high, bright voice', 'voice goes high and bright', Flag.vocalShift,
+        'Stress tightens the vocal cords and raises pitch.'),
+    _Behavior('laugh', 'laughs nervously after answers', 'laughs nervously', Flag.vocalShift,
+        'A nervous laugh on one topic, and nowhere else, leaks discomfort.'),
+    _Behavior('forehead', 'rubs the forehead when thinking', 'rubs the forehead', Flag.pacifying,
+        'Forehead rubbing is a pacifier.'),
+    _Behavior('nose', 'touches the nose a lot (allergies)', 'touches the nose', Flag.pacifying,
+        'Nose touching can be a pacifier or a way of blocking the mouth.'),
+    _Behavior('shrug', 'shrugs one shoulder a lot', 'shrugs one shoulder', Flag.gestureShift,
+        'A one-shoulder shrug shows weak commitment to the words.'),
+    _Behavior('sigh', 'sighs heavily between answers', 'sighs heavily', Flag.vocalShift,
+        'A heavy sigh on one topic releases built-up tension.'),
+  ];
+
+  static const List<_CaseFile> _cases = <_CaseFile>[
+    _CaseFile('cash missing from the register', 'whether they took the cash', "No, I didn't take it.", <List<String>>[
+      <String>['who closed the register', 'Me and Luis.'],
+      <String>['about the lunch break', 'Twenty minutes, at the deli.'],
+      <String>['where they parked', 'Out back, by the dumpster.'],
+      <String>['when they left', 'Right at nine.'],
+      <String>['about the camera outage', "I didn't know it was down."],
+      <String>['about money troubles', 'Same as anyone.'],
+    ]),
+    _CaseFile('client files leaked to a competitor', 'whether they sent the files', 'No. I never sent them.', <List<String>>[
+      <String>['which laptop they use', 'The silver work one.'],
+      <String>['when they logged off Friday', 'Around six.'],
+      <String>['who else had access', 'Three people on my team.'],
+      <String>['about the competitor', 'Never worked with them.'],
+      <String>['about weekend plans', "Just my sister's place."],
+      <String>['about the shared drive', 'Everyone uses it.'],
+    ]),
+    _CaseFile('a dent in the company van', 'whether they hit something', 'No. It was fine when I parked.', <List<String>>[
+      <String>['where they parked overnight', 'Lot B, near the fence.'],
+      <String>['who rode along', 'Nobody, just me.'],
+      <String>['about the route', 'Highway, then Fifth.'],
+      <String>['when they returned the keys', 'Seven-thirty.'],
+      <String>['about the weather', 'Rainy, kind of dark.'],
+      <String>['about the fuel log', 'Filled it Tuesday.'],
+    ]),
+    _CaseFile('a missing office laptop', 'whether they took it', "No, I didn't.", <List<String>>[
+      <String>['where they sat that day', 'By the window.'],
+      <String>['who left last', 'Carla, I think.'],
+      <String>['about the cleaners', 'They come at eight.'],
+      <String>['when they last saw it', 'Tuesday morning.'],
+      <String>['about the storage room', "I don't have a key."],
+      <String>['about their own laptop', "It's at home."],
+    ]),
+    _CaseFile('a fire alarm pulled as a prank', 'whether they pulled it', 'No way.', <List<String>>[
+      <String>['which class they were in', 'Chemistry.'],
+      <String>['who they sat with', 'Jake and Mia.'],
+      <String>['about the hallway', "I didn't go out there."],
+      <String>['about lunch', 'Pizza in the cafeteria.'],
+      <String>['when the bell rang', 'Right after it went off.'],
+      <String>['about the hall pass', 'I never asked for one.'],
+    ]),
+    _CaseFile('a padded expense report', 'whether they added personal charges', 'No, never.', <List<String>>[
+      <String>['about the hotel bill', 'Two nights, for the conference.'],
+      <String>['about the taxi receipts', 'Airport and back.'],
+      <String>['who approved the trip', 'My manager.'],
+      <String>['about the client dinner', 'Four of us, Italian place.'],
+      <String>['about the conference', 'Mostly sales talks.'],
+      <String>['when they filed it', 'The Monday after.'],
+    ]),
+    _CaseFile('a broken shop window', 'whether they broke it', 'No. I heard it from the back.', <List<String>>[
+      <String>['where they were standing', 'In the stockroom.'],
+      <String>['who else was working', 'Just Dana.'],
+      <String>['about the noise', 'A loud crack, then glass.'],
+      <String>['when they called the owner', 'Right away.'],
+      <String>['about the kids outside', 'There were a few earlier.'],
+      <String>['about closing time', 'We close at eight.'],
+    ]),
+    _CaseFile('deleted server logs', 'whether they ran the delete', 'No. Not me.', <List<String>>[
+      <String>['about the backup schedule', 'Nightly, at two.'],
+      <String>['when they left Tuesday', 'About seven.'],
+      <String>['who has admin access', 'Me and two others.'],
+      <String>['about the team lead', 'We get along fine.'],
+      <String>['about their commute', 'Train, forty minutes.'],
+      <String>['about the server room', 'I badge in most days.'],
+    ]),
+  ];
+
+  static const List<_Cause> _causes = <_Cause>[
+    _Cause('a phone buzzes on the table', 'glances at it and silences it'),
+    _Cause('a sneeze comes on', 'sneezes twice and apologizes'),
+    _Cause('someone knocks on the door', 'looks over at it'),
+    _Cause('a siren passes outside', 'looks toward the window'),
+    _Cause('the chair wobbles', 'shifts to steady it'),
+    _Cause('the AC kicks on', 'pulls the sleeves down'),
+    _Cause('a coffee cup tips', 'catches it and wipes up the drip'),
+    _Cause('the lights flicker', 'looks up at them'),
+    _Cause('a door slams down the hall', 'flinches and looks over'),
+  ];
+
+  /// Habit phrase → moment phrase, for tests.
+  @visibleForTesting
+  static Map<String, String> get habitToMoment => <String, String>{for (final b in _behaviors) b.habit: b.moment};
+
+  static String _joinHabits(List<String> items) {
+    if (items.length == 1) return items.first;
+    return '${items.sublist(0, items.length - 1).join(', ')} and ${items.last}';
+  }
+
+  /// Builds a fresh baseline case. [focus] steers the anomaly toward one flag
+  /// (or forces a clean case for [Flag.cleanBaseline]).
+  static Challenge generate(math.Random rng, {bool hard = false, Flag? focus, bool? clean}) {
+    final name = MemoryContent.names[rng.nextInt(MemoryContent.names.length)];
+    final file = _cases[rng.nextInt(_cases.length)];
+
+    // Baseline habits, at most one per group.
+    final habitCount = hard ? 3 : 2;
+    final shuffled = List<_Behavior>.of(_behaviors)..shuffle(rng);
+    final habits = <_Behavior>[];
+    for (final b in shuffled) {
+      if (habits.length >= habitCount) break;
+      if (b.group != null && habits.any((h) => h.group == b.group)) continue;
+      habits.add(b);
+    }
+
+    final isClean = clean ?? (focus == Flag.cleanBaseline ? true : rng.nextDouble() < 0.35);
+    _Behavior? anomaly;
+    if (!isClean) {
+      final candidates = _behaviors.where((b) => !habits.contains(b)).toList()..shuffle(rng);
+      final focused = candidates.where((b) => b.flag == focus).toList();
+      anomaly = focused.isNotEmpty ? focused.first : candidates.first;
+    }
+
+    // Topics: the accusation plus side questions, each used once.
+    final optionCount = hard ? 6 : 5;
+    final topics = <List<String>>[
+      <String>[file.accusation, file.denial],
+      ...(List<List<String>>.of(file.topics)..shuffle(rng)),
+    ];
+    final lines = <String>[];
+    var answer = Challenge.clean;
+    var topicIndex = 0;
+    String take(String behavior) {
+      final t = topics[topicIndex++];
+      return 'Asked ${t[0]} → $behavior: "${t[1]}"';
+    }
+
+    // The anomaly lands on the accusation only some of the time, but the
+    // accusation is always one of the moments.
+    final accusation = topics.removeAt(0);
+    topics.shuffle(rng);
+    final accusationSlot = (anomaly != null && rng.nextDouble() < 0.3) ? 0 : 1 + rng.nextInt(optionCount - 1);
+    topics.insert(accusationSlot, accusation);
+    final causes = List<_Cause>.of(_causes)..shuffle(rng);
+    if (anomaly != null) {
+      answer = lines.length;
+      lines.add(take(anomaly.moment));
+    }
+    for (final h in habits) {
+      lines.add(take(h.moment));
+    }
+    lines.add(take('${causes[0].event}; ${causes[0].reaction}'));
+    var extra = 0;
+    while (lines.length < optionCount) {
+      // Fill with more baseline habits (so tells keep showing up as decoys).
+      lines.add(take(habits[extra % habits.length].moment));
+      extra++;
+    }
+
+    // Shuffle, tracking the answer.
+    final order = List<int>.generate(lines.length, (i) => i)..shuffle(rng);
+    final options = <String>[for (final i in order) lines[i]];
+    final correct = answer == Challenge.clean ? Challenge.clean : order.indexOf(answer);
+
+    final habitText = _joinHabits(habits.map((h) => h.habit).toList());
+    final context = '$name is questioned about ${file.incident}.\n\n'
+        'BASELINE: $name $habitText. This has been true since the interview started.';
+    final explainHabits = 'Normal for $name: ${habits.map((h) => h.moment).join(', ')}.';
+    final insight = anomaly == null
+        ? 'Every tell here is part of $name\'s baseline. $explainHabits The "${causes[0].event}" moment had an '
+            'outside cause. With no change from normal there\'s no signal; calling a lie would be a false alarm.'
+        : 'Only "${anomaly.moment}" isn\'t in $name\'s baseline. ${anomaly.meaning} $explainHabits '
+            'The "${causes[0].event}" moment had an outside cause.';
+
+    return Challenge(
+      id: 'gen_${rng.nextInt(1 << 30)}',
+      level: 1,
+      type: ChallengeType.baseline,
+      flag: anomaly?.flag ?? Flag.cleanBaseline,
+      prompt: 'Which moment breaks the baseline, if any?',
+      context: context,
+      options: options,
+      correct: <int>{correct},
+      insight: insight,
+      highLoad: hard,
+    );
+  }
+
+  /// Swaps a fixed baseline question for a freshly generated one.
+  static Challenge live(Challenge c, math.Random rng, {bool? hard}) {
+    if (c.type != ChallengeType.baseline) return c;
+    return generate(rng, hard: hard ?? c.highLoad, focus: c.flag);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PRACTICE HUB
+// ════════════════════════════════════════════════════════════════════════════
+
+enum PracticeMode {
+  baselineLab('Baseline Lab', 'Endless fresh baseline cases. How long can your streak go?', Icons.science, Palette.green),
+  speed('Speed Round', '90 seconds. As many right answers as you can.', Icons.timer, Palette.orange),
+  survival('Survival', 'Three strikes and you\'re out. It gets harder as you go.', Icons.local_fire_department, Palette.red),
+  mistakes('Mistake Review', 'Replay the questions you got wrong until they stick.', Icons.replay, Palette.purple),
+  daily('Daily Case File', 'Five new cases every day. Bonus IP the first time.', Icons.folder_special, Palette.gold);
+
+  const PracticeMode(this.title, this.subtitle, this.icon, this.color);
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+}
+
+class PracticeHubScreen extends StatefulWidget {
+  const PracticeHubScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<PracticeHubScreen> createState() => _PracticeHubScreenState();
+}
+
+class _PracticeHubScreenState extends State<PracticeHubScreen> {
+  GameState get game => widget.game;
+
+  @override
+  void initState() {
+    super.initState();
+    game.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    game.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  String _status(PracticeMode mode) {
+    final best = game.practiceBest[mode.name] ?? 0;
+    return switch (mode) {
+      PracticeMode.baselineLab => best == 0 ? 'No streak yet' : 'Best streak: $best',
+      PracticeMode.speed => best == 0 ? 'No score yet' : 'Best: $best correct',
+      PracticeMode.survival => best == 0 ? 'No score yet' : 'Best: $best correct',
+      PracticeMode.mistakes => game.mistakes.isEmpty ? 'No mistakes saved' : '${game.mistakes.length} to review',
+      PracticeMode.daily => game.dailyDoneDay == dayIndex() ? 'Done today ✓ (replay for practice)' : 'Ready',
+    };
+  }
+
+  void _open(PracticeMode mode) {
+    if (mode == PracticeMode.mistakes && game.mistakes.isEmpty) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(
+          backgroundColor: Palette.surfaceHigh,
+          content: Text('No mistakes saved yet. Wrong answers in quests and practice show up here.',
+              style: TextStyle(color: Palette.textPrimary)),
+        ));
+      return;
+    }
+    HapticFeedback.selectionClick();
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => PracticeScreen(game: game, mode: mode)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: SafeArea(
+        bottom: false,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        'Practice',
+                        style: TextStyle(color: Palette.textPrimary, fontSize: 26, fontWeight: FontWeight.w900),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'Extra reps. No hearts lost.',
+                        style: TextStyle(color: Palette.textMuted, fontSize: 14),
+                      ),
+                    ],
+                  ),
+                ),
+                StatPill(emoji: '💡', label: '${game.insightPoints} IP', color: Palette.blue, tooltip: 'Insight Points'),
+              ],
+            ),
+            const SizedBox(height: 16),
+            InfoBanner(
+              icon: Icons.lock_open,
+              color: Palette.teal,
+              text: 'Mixed modes use every level you\'ve unlocked so far (up to Level ${game.highestUnlockedLevel}).',
+            ),
+            const SizedBox(height: 14),
+            for (final mode in PracticeMode.values)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Material(
+                  color: Palette.surface,
+                  borderRadius: BorderRadius.circular(18),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(18),
+                    onTap: () => _open(mode),
+                    child: Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: Palette.border, width: 1.5),
+                      ),
+                      child: Row(
+                        children: <Widget>[
+                          CircleAvatar(
+                            radius: 24,
+                            backgroundColor: mode.color,
+                            child: Icon(mode.icon, color: Colors.white, size: 24),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                Text(
+                                  mode.title,
+                                  style: const TextStyle(color: Palette.textPrimary, fontSize: 17, fontWeight: FontWeight.w900),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(mode.subtitle, style: const TextStyle(color: Palette.textMuted, fontSize: 13, height: 1.3)),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _status(mode),
+                                  style: TextStyle(color: mode.color, fontSize: 12.5, fontWeight: FontWeight.w800),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Icon(Icons.chevron_right, color: Palette.textMuted),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _PracticePhase { answering, feedback, over }
+
+class PracticeScreen extends StatefulWidget {
+  const PracticeScreen({super.key, required this.game, required this.mode});
+  final GameState game;
+  final PracticeMode mode;
+
+  @override
+  State<PracticeScreen> createState() => _PracticeScreenState();
+}
+
+class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProviderStateMixin {
+  static const int speedSeconds = 90;
+  static const int survivalStrikes = 3;
+  static const int dailyBonus = 25;
+
+  final math.Random _rng = math.Random();
+  late final AnimationController _sheetController;
+  late final Animation<Offset> _sheetOffset;
+
+  late Challenge _current;
+  List<Challenge> _fixed = <Challenge>[];
+  int _fixedIndex = 0;
+  int _serial = 0;
+
+  _PracticePhase _phase = _PracticePhase.answering;
+  Set<int> _selection = <int>{};
+  bool _lastCorrect = false;
+  bool? _flash;
+
+  int _score = 0;
+  int _answered = 0;
+  int _streak = 0;
+  int _bestStreak = 0;
+  int _strikes = 0;
+  int _ipEarned = 0;
+  int _secondsLeft = speedSeconds;
+  Timer? _clock;
+  bool _newBest = false;
+  bool _bonusAwarded = false;
+
+  GameState get game => widget.game;
+  PracticeMode get mode => widget.mode;
+
+  @override
+  void initState() {
+    super.initState();
+    _sheetController = AnimationController(vsync: this, duration: const Duration(milliseconds: 340));
+    _sheetOffset = Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero).animate(
+      CurvedAnimation(parent: _sheetController, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic),
+    );
+    _start();
+  }
+
+  @override
+  void dispose() {
+    _clock?.cancel();
+    _sheetController.dispose();
+    super.dispose();
+  }
+
+  void _start() {
+    _score = 0;
+    _answered = 0;
+    _streak = 0;
+    _bestStreak = 0;
+    _strikes = 0;
+    _ipEarned = 0;
+    _newBest = false;
+    _bonusAwarded = false;
+    _fixedIndex = 0;
+    _fixed = switch (mode) {
+      PracticeMode.mistakes => (game.mistakes
+          .map((id) => Curriculum.byId[id])
+          .whereType<Challenge>()
+          .map((c) => c.shuffled(_rng))
+          .toList()
+        ..shuffle(_rng)),
+      PracticeMode.daily => _dailySet(),
+      _ => <Challenge>[],
+    };
+    _clock?.cancel();
+    if (mode == PracticeMode.speed) {
+      _secondsLeft = speedSeconds;
+      _clock = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) return;
+        setState(() => _secondsLeft--);
+        if (_secondsLeft <= 0) _finish();
+      });
+    }
+    if ((mode == PracticeMode.mistakes || mode == PracticeMode.daily) && _fixed.isEmpty) {
+      _phase = _PracticePhase.over;
+      return;
+    }
+    _phase = _PracticePhase.answering;
+    _current = _nextChallenge();
+    _selection = <int>{};
+    _serial++;
+  }
+
+  List<Challenge> _dailySet() {
+    final seeded = math.Random(dayIndex() * 7919 + 17);
+    final maxLevel = game.highestUnlockedLevel;
+    final pool = Curriculum.challenges.where((c) => c.level <= maxLevel).toList()..shuffle(seeded);
+    return pool.take(5).map((c) => BaselineGenerator.live(c, seeded).shuffled(seeded)).toList();
+  }
+
+  Challenge _randomChallenge({required bool hard}) {
+    final maxLevel = game.highestUnlockedLevel;
+    var pool = Curriculum.challenges.where((c) => c.level <= maxLevel && c.highLoad == hard).toList();
+    if (pool.isEmpty) pool = Curriculum.challenges.where((c) => c.level <= maxLevel).toList();
+    final pick = pool[_rng.nextInt(pool.length)];
+    return BaselineGenerator.live(pick, _rng).shuffled(_rng);
+  }
+
+  Challenge _nextChallenge() => switch (mode) {
+        PracticeMode.baselineLab =>
+          BaselineGenerator.generate(_rng, hard: _streak >= 5 && _rng.nextBool()).shuffled(_rng),
+        PracticeMode.speed => _randomChallenge(hard: _rng.nextDouble() < 0.3),
+        PracticeMode.survival => _randomChallenge(hard: _rng.nextDouble() < math.min(0.85, _score * 0.07)),
+        PracticeMode.mistakes || PracticeMode.daily => _fixed[_fixedIndex],
+      };
+
+  bool get _canCheck => _phase == _PracticePhase.answering && _selection.length == _current.requiredSelections;
+
+  void _onOptionTap(int index) {
+    if (_phase != _PracticePhase.answering) return;
+    final c = _current;
+    if (c.isMultiSelect) {
+      if (_selection.contains(index)) {
+        setState(() => _selection = <int>{..._selection}..remove(index));
+      } else if (_selection.length < c.requiredSelections) {
+        setState(() => _selection = <int>{..._selection, index});
+      } else {
+        HapticFeedback.heavyImpact();
+        return;
+      }
+    } else {
+      setState(() => _selection = <int>{index});
+    }
+    HapticFeedback.selectionClick();
+  }
+
+  void _check() {
+    if (!_canCheck) return;
+    final correct = setEquals(_selection, _current.correct);
+    final ip = correct ? (mode == PracticeMode.speed ? 2 : 3) : 0;
+    game.recordPractice(_current, correct: correct, ip: ip);
+    _ipEarned += ip;
+    _answered++;
+    if (correct) {
+      _score++;
+      _streak++;
+      _bestStreak = math.max(_bestStreak, _streak);
+      HapticFeedback.mediumImpact();
+    } else {
+      _streak = 0;
+      _strikes++;
+      HapticFeedback.heavyImpact();
+    }
+    if (mode == PracticeMode.speed) {
+      setState(() {
+        _flash = correct;
+        _phase = _PracticePhase.feedback;
+      });
+      Future<void>.delayed(const Duration(milliseconds: 650), () {
+        if (!mounted || _phase == _PracticePhase.over) return;
+        _advance();
+      });
+      return;
+    }
+    setState(() {
+      _lastCorrect = correct;
+      _phase = _PracticePhase.feedback;
+    });
+    _sheetController.forward(from: 0);
+  }
+
+  Future<void> _continue() async {
+    await _sheetController.reverse();
+    if (!mounted) return;
+    _advance();
+  }
+
+  void _advance() {
+    final fixedMode = mode == PracticeMode.mistakes || mode == PracticeMode.daily;
+    if (mode == PracticeMode.survival && _strikes >= survivalStrikes) {
+      _finish();
+      return;
+    }
+    if (fixedMode) {
+      _fixedIndex++;
+      if (_fixedIndex >= _fixed.length) {
+        _finish();
+        return;
+      }
+    }
+    setState(() {
+      _current = _nextChallenge();
+      _selection = <int>{};
+      _flash = null;
+      _phase = _PracticePhase.answering;
+      _serial++;
+    });
+  }
+
+  void _finish() {
+    if (_phase == _PracticePhase.over) return;
+    _clock?.cancel();
+    final value = mode == PracticeMode.baselineLab ? _bestStreak : _score;
+    if (mode == PracticeMode.speed || mode == PracticeMode.survival || mode == PracticeMode.baselineLab) {
+      _newBest = game.reportPracticeScore(mode.name, value);
+    }
+    if (mode == PracticeMode.daily) {
+      _bonusAwarded = game.completeDaily(dailyBonus);
+    } else {
+      game.touchPracticeStreak();
+    }
+    setState(() => _phase = _PracticePhase.over);
+  }
+
+  Future<void> _handleBack() async {
+    if (_phase == _PracticePhase.over || _answered == 0) {
+      Navigator.of(context).pop();
+      return;
+    }
+    if (mode == PracticeMode.baselineLab) {
+      _finish();
+      return;
+    }
+    final quit = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: Palette.surface,
+        title: const Text('End this run?', style: TextStyle(color: Palette.textPrimary)),
+        content: const Text('Points you earned are kept.', style: TextStyle(color: Palette.textMuted)),
+        actions: <Widget>[
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('KEEP GOING')),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('END', style: TextStyle(color: Palette.red)),
+          ),
+        ],
+      ),
+    );
+    if (quit == true && mounted) _finish();
+  }
+
+  String get _headerStat {
+    return switch (mode) {
+      PracticeMode.baselineLab => 'Streak $_streak · best ${math.max(_bestStreak, game.practiceBest[mode.name] ?? 0)}',
+      PracticeMode.speed => '⏱ ${math.max(0, _secondsLeft)}s · $_score correct',
+      PracticeMode.survival => '${'❤️' * (survivalStrikes - _strikes)}${'🖤' * _strikes} · $_score',
+      PracticeMode.mistakes => '${math.min(_fixedIndex + 1, _fixed.length)}/${_fixed.length}',
+      PracticeMode.daily => 'Case ${math.min(_fixedIndex + 1, _fixed.length)}/${_fixed.length}',
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope<Object?>(
+      canPop: false,
+      onPopInvokedWithResult: (bool didPop, Object? result) {
+        if (!didPop) _handleBack();
+      },
+      child: Scaffold(
+        backgroundColor: Palette.background,
+        body: SafeArea(child: _phase == _PracticePhase.over ? _buildOver() : _buildRun()),
+      ),
+    );
+  }
+
+  Widget _buildRun() {
+    final revealed = _phase == _PracticePhase.feedback && mode != PracticeMode.speed;
+    final screenHeight = MediaQuery.of(context).size.height;
+    return Stack(
+      children: <Widget>[
+        Column(
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 6, 16, 4),
+              child: Row(
+                children: <Widget>[
+                  IconButton(
+                    tooltip: 'End',
+                    onPressed: _handleBack,
+                    icon: const Icon(Icons.close, color: Palette.textMuted, size: 28),
+                  ),
+                  Expanded(
+                    child: Text(
+                      mode.title.toUpperCase(),
+                      style: TextStyle(color: mode.color, fontWeight: FontWeight.w900, letterSpacing: 1),
+                    ),
+                  ),
+                  Text(_headerStat, style: const TextStyle(color: Palette.textPrimary, fontWeight: FontWeight.w800)),
+                ],
+              ),
+            ),
+            if (mode == PracticeMode.speed)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                    value: (_secondsLeft / speedSeconds).clamp(0.0, 1.0),
+                    minHeight: 8,
+                    backgroundColor: Palette.surfaceHigh,
+                    valueColor: AlwaysStoppedAnimation<Color>(mode.color),
+                  ),
+                ),
+              ),
+            if (_flash != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: InfoBanner(
+                  icon: _flash! ? Icons.check_circle : Icons.cancel,
+                  color: _flash! ? Palette.green : Palette.red,
+                  text: _flash! ? 'Correct' : 'Wrong: ${_current.correctAnswerText}',
+                ),
+              ),
+            Expanded(
+              child: SingleChildScrollView(
+                key: ValueKey<int>(_serial),
+                padding: EdgeInsets.fromLTRB(16, 12, 16, revealed ? screenHeight * 0.55 : 24),
+                child: ChallengeView(
+                  challenge: _current,
+                  selection: _selection,
+                  revealed: revealed || _flash != null,
+                  onOptionTap: _onOptionTap,
+                ),
+              ),
+            ),
+            if (_phase == _PracticePhase.answering)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: ChunkyButton(
+                  label: _current.isMultiSelect && _selection.length < _current.requiredSelections
+                      ? 'Select ${_current.requiredSelections - _selection.length} more'
+                      : 'Check answer',
+                  color: mode.color,
+                  onPressed: _canCheck ? _check : null,
+                ),
+              ),
+          ],
+        ),
+        if (_phase == _PracticePhase.feedback && mode != PracticeMode.speed)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: SlideTransition(
+              position: _sheetOffset,
+              child: FeedbackSheet(
+                correct: _lastCorrect,
+                challenge: _current,
+                ipGain: _lastCorrect ? 3 : 0,
+                heartsLeft: 0,
+                practice: true,
+                onContinue: _continue,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildOver() {
+    final best = game.practiceBest[mode.name] ?? 0;
+    final headline = switch (mode) {
+      PracticeMode.baselineLab => 'Best streak this run: $_bestStreak',
+      PracticeMode.speed => '$_score correct in $speedSeconds seconds',
+      PracticeMode.survival => 'You survived $_score questions',
+      PracticeMode.mistakes => '$_score of $_answered fixed',
+      PracticeMode.daily => '$_score of ${_fixed.length} cases solved',
+    };
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+      child: Column(
+        children: <Widget>[
+          const Spacer(),
+          Text(_newBest ? '🏆' : '🎯', style: const TextStyle(fontSize: 72)),
+          const SizedBox(height: 12),
+          Text(
+            _newBest ? 'New personal best!' : 'Run complete',
+            style: TextStyle(color: _newBest ? Palette.gold : Palette.textPrimary, fontSize: 28, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 8),
+          Text(headline, textAlign: TextAlign.center, style: const TextStyle(color: Palette.textPrimary, fontSize: 17)),
+          const SizedBox(height: 18),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Palette.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Palette.border, width: 1.5),
+            ),
+            child: Column(
+              children: <Widget>[
+                _BreakdownLine(label: 'Insight Points', value: '+${_ipEarned + (_bonusAwarded ? dailyBonus : 0)} IP'),
+                if (_bonusAwarded) const _BreakdownLine(label: 'Daily case bonus', value: '+$dailyBonus IP'),
+                if (mode == PracticeMode.speed || mode == PracticeMode.survival || mode == PracticeMode.baselineLab)
+                  _BreakdownLine(label: 'Personal best', value: '$best'),
+                if (mode == PracticeMode.mistakes)
+                  _BreakdownLine(label: 'Mistakes left', value: '${game.mistakes.length}'),
+              ],
+            ),
+          ),
+          const Spacer(),
+          ChunkyButton(label: 'Done', color: Palette.green, onPressed: () => Navigator.of(context).pop()),
+          const SizedBox(height: 8),
+          if (mode != PracticeMode.mistakes || game.mistakes.isNotEmpty)
+            TextButton(
+              onPressed: () => setState(_start),
+              child: const Text(
+                'PLAY AGAIN',
+                style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800, letterSpacing: 0.8),
+              ),
+            ),
+        ],
       ),
     );
   }

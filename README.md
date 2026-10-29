@@ -53,6 +53,20 @@ Each course has 2 lessons and an adaptive review; a final exam covers everything
 Baseline and statement questions always offer **"Nothing here"**, and some cases are
 genuinely truthful, so you practice not crying wolf as well as catching lies.
 
+## Practice
+
+A third tab for extra reps that never cost hearts:
+
+- **Baseline Lab**: endless, freshly generated baseline cases with a best streak.
+- **Speed Round**: 90 seconds across every unlocked level.
+- **Survival**: three strikes, getting harder as your score climbs.
+- **Mistake Review**: replays questions you got wrong until you get them right.
+- **Daily Case File**: five new cases a day, with a bonus the first time.
+
+Level 1 baseline questions are generated fresh every time: each person gets a random baseline
+built from the same tells (neck rubbing, collar tugging, blink bursts, pauses…), every option
+shows a tell, and only the baseline tells you which one, if any, is a real change.
+
 ## Memory Gym
 
 A second tab that trains memory with techniques that hold up in research, not generic brain games:
