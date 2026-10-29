@@ -21,7 +21,7 @@ void main() {
     expect(MemoryContent.jobs.toSet().length, greaterThanOrEqualTo(MemoryDrill.faces.maxLevel));
     expect(MemoryContent.details.toSet().length, greaterThan(MemoryDrill.faces.maxLevel + 4));
     expect(MemoryContent.kimItems.toSet().length, MemoryContent.kimItems.length);
-    expect(MemoryContent.kimItems.length, greaterThan(20 + 4)); // biggest grid + spares
+    expect(MemoryContent.kimItems.length, greaterThan(30 + 5)); // biggest grid + spares
   });
 
   test('snapshot questions have 4 distinct options', () {

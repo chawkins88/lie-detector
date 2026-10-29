@@ -5293,12 +5293,12 @@ class OutOfHeartsView extends StatelessWidget {
 // ════════════════════════════════════════════════════════════════════════════
 
 enum MemoryDrill {
-  digits('Number Span', 'Chunking', Icons.dialpad, Palette.blue, 5, 3, 16, 'digits'),
-  words('Story Chain', 'The link method', Icons.link, Palette.purple, 5, 3, 15, 'words'),
-  palace('Memory Palace', 'Method of loci', Icons.account_balance, Palette.gold, 5, 3, 12, 'items'),
-  faces('Names & Faces', 'Name hooks', Icons.badge, Palette.pink, 3, 2, 8, 'people'),
-  kim("Kim's Game", 'Visual attention', Icons.grid_view, Palette.teal, 1, 1, 6, ''),
-  snapshot('Person Snapshot', 'Observation recall', Icons.person_search, Palette.orange, 1, 1, 6, ''),
+  digits('Number Span', 'Chunking', Icons.dialpad, Palette.blue, 7, 4, 20, 'digits'),
+  words('Story Chain', 'The link method', Icons.link, Palette.purple, 7, 4, 20, 'words'),
+  palace('Memory Palace', 'Method of loci', Icons.account_balance, Palette.gold, 7, 4, 12, 'items'),
+  faces('Names & Faces', 'Name hooks', Icons.badge, Palette.pink, 4, 3, 10, 'people'),
+  kim("Kim's Game", 'Visual attention', Icons.grid_view, Palette.teal, 2, 1, 7, ''),
+  snapshot('Person Snapshot', 'Observation recall', Icons.person_search, Palette.orange, 2, 1, 7, ''),
   review('Spaced Review', 'Retrieval & spacing', Icons.style, Palette.green, 0, 0, 0, '');
 
   const MemoryDrill(
@@ -6843,7 +6843,7 @@ class _DigitSpanScreenState extends State<DigitSpanScreen> with DrillSession<Dig
         children: <Widget>[
           StudyTimer(
             key: ValueKey<String>('study$trial$_target'),
-            duration: Duration(milliseconds: 1500 + 900 * _target.length),
+            duration: Duration(milliseconds: 1000 + 650 * _target.length),
             color: drill.color,
             onDone: () => setState(() => phase = DrillPhase.recall),
           ),
@@ -7009,7 +7009,7 @@ class _StoryChainScreenState extends State<StoryChainScreen> with DrillSession<S
   void _startTrial() {
     final bank = List<String>.of(MemoryContent.words)..shuffle(rng);
     final n = level;
-    final decoys = math.min(6, math.max(3, n ~/ 2));
+    final decoys = math.min(10, math.max(5, n ~/ 2 + 2));
     setState(() {
       _target = bank.take(n).toList();
       _pool = bank.take(n + decoys).toList()..shuffle(rng);
@@ -7083,7 +7083,7 @@ class _StoryChainScreenState extends State<StoryChainScreen> with DrillSession<S
         children: <Widget>[
           StudyTimer(
             key: ValueKey<String>('words$trial'),
-            duration: Duration(seconds: 4 + _target.length * 3),
+            duration: Duration(seconds: 2 + _target.length * 2),
             color: drill.color,
             onDone: () => setState(() => phase = DrillPhase.recall),
           ),
@@ -7274,6 +7274,7 @@ class _MemoryPalaceScreenState extends State<MemoryPalaceScreen> with DrillSessi
           // Mostly other items from this walk, so you must know the position.
           pool: <String>[...sessionLabels, ...extras],
           rng: rng,
+          count: 5,
         ),
     ];
     setState(() {
@@ -7461,6 +7462,7 @@ class _NamesFacesScreenState extends State<NamesFacesScreen> with DrillSession<N
           answer: p.name,
           pool: <String>[...sessionNames, ...names.skip(n).take(4)],
           rng: rng,
+          count: 5,
         ),
       for (final p in detailOrder)
         buildChoiceQuestion(
@@ -7469,6 +7471,7 @@ class _NamesFacesScreenState extends State<NamesFacesScreen> with DrillSession<N
           answer: p.detail,
           pool: <String>[...sessionDetails, ...details.skip(n).take(4)],
           rng: rng,
+          count: 5,
         ),
     ];
     setState(() {
@@ -7621,9 +7624,9 @@ class KimsGameScreen extends StatefulWidget {
 }
 
 class _KimsGameScreenState extends State<KimsGameScreen> with DrillSession<KimsGameScreen> {
-  static const List<int> _sizes = <int>[4, 6, 9, 12, 16, 20];
-  static const List<int> _columns = <int>[2, 3, 3, 4, 4, 5];
-  static const List<int> _studySeconds = <int>[6, 8, 10, 12, 15, 18];
+  static const List<int> _sizes = <int>[6, 9, 12, 16, 20, 25, 30];
+  static const List<int> _columns = <int>[3, 3, 4, 4, 5, 5, 5];
+  static const List<int> _studySeconds = <int>[5, 7, 8, 10, 12, 14, 15];
 
   List<String> _grid = <String>[];
   int _target = 0;
@@ -7657,7 +7660,7 @@ class _KimsGameScreenState extends State<KimsGameScreen> with DrillSession<KimsG
       _target = target;
       _missingMode = trial.isOdd;
       _replacement = outside.first;
-      _options = <String>[grid[target], ...outside.skip(1).take(3)]..shuffle(rng);
+      _options = <String>[grid[target], ...outside.skip(1).take(4)]..shuffle(rng);
       phase = DrillPhase.study;
     });
   }
@@ -7851,7 +7854,7 @@ class SnapshotScreen extends StatefulWidget {
 }
 
 class _SnapshotScreenState extends State<SnapshotScreen> with DrillSession<SnapshotScreen> {
-  static const List<int> _studySeconds = <int>[30, 24, 20, 16, 13, 10];
+  static const List<int> _studySeconds = <int>[22, 18, 15, 12, 10, 8, 6];
 
   final List<int> _order = <int>[];
   SnapshotCase? _case;
