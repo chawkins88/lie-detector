@@ -225,6 +225,27 @@ class Challenge {
         highLoad: highLoad,
       );
 
+  /// Emotions most often confused with each one, used to pad answer choices.
+  static const Map<String, List<String>> _confusable = <String, List<String>>{
+    'Contempt': <String>['Disgust', 'Duping Delight', 'Anger', 'Happiness'],
+    'Fear': <String>['Surprise', 'Sadness', 'Anger', 'Disgust'],
+    'Disgust': <String>['Contempt', 'Anger', 'Sadness', 'Fear'],
+    'Anger': <String>['Disgust', 'Contempt', 'Fear', 'Sadness'],
+    'Surprise': <String>['Fear', 'Happiness', 'Duping Delight', 'Sadness'],
+    'Sadness': <String>['Fear', 'Contempt', 'Disgust', 'Anger'],
+    'Duping Delight': <String>['Happiness', 'Contempt', 'Surprise', 'Disgust'],
+    'Happiness': <String>['Duping Delight', 'Contempt', 'Surprise', 'Fear'],
+  };
+
+  static List<String> _sixEmotions(List<String> emotions, int answer) {
+    final result = List<String>.of(emotions);
+    for (final e in <String>[...?_confusable[emotions[answer]], ...kEmotionEmoji.keys]) {
+      if (result.length >= 6) break;
+      if (!result.contains(e)) result.add(e);
+    }
+    return result;
+  }
+
   /// Level 2 — flash card describing a facial movement.
   factory Challenge.micro({
     required String id,
@@ -242,7 +263,7 @@ class Challenge {
         flag: flag,
         prompt: 'Which emotion just leaked?',
         context: card,
-        options: emotions,
+        options: _sixEmotions(emotions, answer),
         correct: <int>{answer},
         insight: insight,
         highLoad: highLoad,
@@ -645,9 +666,10 @@ class Curriculum {
         'Asked where he parked → voice jumps higher and quicker: "Side lot, by the gym."',
         'Asked who has a key → slow and low, hands flat on the table, names three people.',
         'Asked if he has money troubles → slow monotone, rubs his eyes: "Same as anybody."',
+        'Asked about his manager → his phone buzzes; he glances at it, silences it, then answers slowly.',
       ],
       answer: 1,
-      insight: 'The theft question got a calm, on-baseline "No", and eye rubbing is his normal habit. The break came on a side question: where he parked. Slips often show up on questions the person didn\'t prepare for, which is exactly why they\'re worth probing.',
+      insight: 'The theft question got a calm, on-baseline "No", and eye rubbing is his normal habit. The break came on a side question: where he parked. Slips often show up on questions the person didn\'t prepare for, which is exactly why they\'re worth probing. His glance at the buzzing phone had an outside cause, so it isn\'t a signal.',
     ),
     Challenge.baseline(
       id: 'b2',
@@ -658,9 +680,10 @@ class Curriculum {
         'Asked which laptop she uses → twirls her hair, then waves at the window as she answers.',
         'Asked when she logged off Friday → answers smoothly, but both hands go still in her lap.',
         'Asked who else had access → hands chop the air as she lists three coworkers by name.',
+        'Asked about the client → stops to sneeze twice, apologizes, then gestures as usual.',
       ],
       answer: 2,
-      insight: 'The direct question got Dana\'s usual big gestures. Her hands only froze on Friday\'s log-off time, a detail she may not want examined. Hair twirling is her thinking habit, so it doesn\'t count.',
+      insight: 'The direct question got Dana\'s usual big gestures. Her hands only froze on Friday\'s log-off time, a detail she may not want examined. Hair twirling is her thinking habit, so it doesn\'t count. The pause to sneeze had an outside cause, so it doesn\'t count.',
     ),
     Challenge.baseline(
       id: 'b3',
@@ -671,9 +694,10 @@ class Curriculum {
         'Asked if he took the cash → hands folded, steady: "No, I didn\'t. Check the camera."',
         'Asked about his lunch break → unfolds his hands and rubs the side of his neck.',
         'Asked if he\'s behind on rent → hands folded, a small laugh: "Isn\'t everyone?"',
+        'Asked about his shift → the AC kicks on, he zips up his jacket, then refolds his hands.',
       ],
       answer: 2,
-      insight: 'Neck rubbing is a pacifier, and it\'s new for Ray; the beard scratching is his normal thinking habit. The reaction came on the lunch-break question, not the accusation. Ask what happened at lunch.',
+      insight: 'Neck rubbing is a pacifier, and it\'s new for Ray; the beard scratching is his normal thinking habit. The reaction came on the lunch-break question, not the accusation. Ask what happened at lunch. Zipping his jacket when the AC came on had an outside cause.',
     ),
     Challenge.baseline(
       id: 'b4',
@@ -684,9 +708,10 @@ class Curriculum {
         'Asked the date of the last sales meeting → glances up to the side, then answers.',
         'Asked who drove her to the airport → a burst of fast blinks, then steady eyes again.',
         'Asked about her bonus → steady gaze, normal blinks, calls it "honestly disappointing."',
+        'Asked about her team → someone knocks; she looks at the door, then back, eyes steady again.',
       ],
       answer: 2,
-      insight: 'Glancing up while recalling a date is her baseline. The blink burst came on who drove her to the airport, a side detail that may connect to the meeting. The direct denial was delivered on baseline.',
+      insight: 'Glancing up while recalling a date is her baseline. The blink burst came on who drove her to the airport, a side detail that may connect to the meeting. The direct denial was delivered on baseline. Looking at the door after a knock had an outside cause.',
     ),
     Challenge.baseline(
       id: 'b5',
@@ -697,9 +722,10 @@ class Curriculum {
         'Asked about his training → shifts in his seat, rubs his lower back, keeps leaning in.',
         'Asked who else was on site → stays leaning in, but both feet slide toward the door.',
         'Asked about the injured worker → leans in, open torso, names him and his crew.',
+        'Asked about the weather that day → his chair squeaks and wobbles; he fixes it and leans back in.',
       ],
       answer: 2,
-      insight: 'The seat shifting is his bad back, present all along. His feet turned to the exit only when asked who else was there, which suggests that\'s the uncomfortable part of the story.',
+      insight: 'The seat shifting is his bad back, present all along. His feet turned to the exit only when asked who else was there, which suggests that\'s the uncomfortable part of the story. Adjusting a wobbly chair had an outside cause.',
     ),
     // High Cognitive Load · Level 1
     Challenge.baseline(
@@ -712,9 +738,10 @@ class Curriculum {
         'Asked about her weekend → still quick, but a beat lower, and no laugh this time.',
         'Asked if anyone knows her password → fast and high, with a giggle: "Only my cat."',
         'Asked if she was online at 2 AM → fast and giggling: "At 2 AM? I\'m always asleep!"',
+        'Asked about her coworkers → her coffee spills; she yelps, mops it up, laughing as usual.',
       ],
       answer: 1,
-      insight: 'For a fast, laughing baseline, the anomaly runs the other way: lower and no laugh. It landed on her weekend, when the login happened, not on the direct questions she seemed ready for.',
+      insight: 'For a fast, laughing baseline, the anomaly runs the other way: lower and no laugh. It landed on her weekend, when the login happened, not on the direct questions she seemed ready for. The spilled coffee was an outside cause, not a signal.',
     ),
     Challenge.baseline(
       id: 'b7',
@@ -726,9 +753,10 @@ class Curriculum {
         'Asked about the backup schedule → glances away, a long pause, adjusts his glasses.',
         'Asked what time he left Tuesday → looks up and holds her gaze the whole answer.',
         'Asked about the deleted logs → stares at his hands, then pushes his glasses up twice.',
+        'Asked about his team lead → an alarm sounds outside; he looks at the window, then back down.',
       ],
       answer: 2,
-      insight: 'Overcompensation. For someone who never makes eye contact, a sudden held gaze is the anomaly, and it came on a time question, not the accusation. People sometimes stare to look honest on the detail they rehearsed.',
+      insight: 'Overcompensation. For someone who never makes eye contact, a sudden held gaze is the anomaly, and it came on a time question, not the accusation. People sometimes stare to look honest on the detail they rehearsed. Looking up at an alarm outside had an outside cause.',
     ),
     Challenge.baseline(
       id: 'b8',
@@ -740,9 +768,10 @@ class Curriculum {
         'Asked which restaurant they went to → answers calmly, hands in her lap, perfectly still.',
         'Asked why it isn\'t on the calendar → shifts in her seat: "I forgot to add it, sorry."',
         'Asked about her sales numbers → rocks, laughs and changes position twice while answering.',
+        'Asked about her commute → her phone rings; she stops rocking to silence it, then starts again.',
       ],
       answer: 1,
-      insight: 'The freeze response. A restless person going still looks calm, which is exactly why it\'s easy to miss. It came on the restaurant question: a specific detail that can be checked.',
+      insight: 'The freeze response. A restless person going still looks calm, which is exactly why it\'s easy to miss. It came on the restaurant question: a specific detail that can be checked. Stopping to silence her phone had an outside cause, unlike the freeze.',
     ),
     Challenge.baseline(
       id: 'b9',
@@ -754,9 +783,10 @@ class Curriculum {
         'Asked about the vendor → leans back, arms wide, and loudly calls them "total amateurs."',
         'Asked when he last spoke to the vendor → puffs out his cheeks and slowly exhales first.',
         'Asked if he\'d take a polygraph → laughs loudly, arms wide: "Bring it. Any day."',
+        'Asked about the budget → coughs hard, takes a long drink of water, then booms on as usual.',
       ],
       answer: 2,
-      insight: 'Collar tugging is Victor\'s baseline (tight shirts), so the "Nope" with a tug means nothing. The new behavior is the cheek-puff exhale, a stress release, on when he last spoke to the vendor.',
+      insight: 'Collar tugging is Victor\'s baseline (tight shirts), so the "Nope" with a tug means nothing. The new behavior is the cheek-puff exhale, a stress release, on when he last spoke to the vendor. The coughing fit and drink of water had an outside cause.',
     ),
 
     // ── LEVEL 2 · MICRO-EXPRESSIONS & ASYMMETRY ────────────────────────────
@@ -1192,9 +1222,10 @@ class Curriculum {
         'Asked where he parked it overnight → shrugs one shoulder only, hands stay down.',
         'Asked if he drove it Friday → hands move steadily: "Twice, for supply runs."',
         'Asked who was with him → small gestures, nods along, names two coworkers.',
+        'Asked about his schedule → stops gesturing to scratch a mosquito bite, then carries on.',
       ],
       answer: 1,
-      insight: 'A one-shoulder shrug shows someone doesn\'t fully believe what they\'re saying. It came on where the van was parked overnight, the likely scene of the dent, while the direct question stayed on baseline.',
+      insight: 'A one-shoulder shrug shows someone doesn\'t fully believe what they\'re saying. It came on where the van was parked overnight, the likely scene of the dent, while the direct question stayed on baseline. Scratching a mosquito bite had an outside cause.',
     ),
     Challenge.baseline(
       id: 'b11',
@@ -1205,9 +1236,10 @@ class Curriculum {
         'Asked who closed with her → eyes lock on one spot on the table until she\'s done.',
         'Asked when her shift started → glances at the counter, then the door: "Around six."',
         'Asked about her coworker Jen → looks around the café: "She\'s great. Always on time."',
+        'Asked about the café owner → a customer drops a tray; she jumps and stares at the noise.',
       ],
       answer: 1,
-      insight: 'Roaming eyes and eye rubbing are her baseline after a double shift. The gaze freeze came when asked who closed with her. That person may matter more than the denial does.',
+      insight: 'Roaming eyes and eye rubbing are her baseline after a double shift. The gaze freeze came when asked who closed with her. That person may matter more than the denial does. Staring at a dropped tray had an outside cause, unlike the gaze freeze.',
     ),
     Challenge.baseline(
       id: 'b12',
@@ -1218,9 +1250,10 @@ class Curriculum {
         'Asked what time he left the gym → rubs his forehead with two fingers, then answers.',
         'Asked about his bruised knuckles → calmly, arms on his legs: "Punching bag. No gloves."',
         'Asked if he knows the other guy → arms resting: "Seen him around. Never talked."',
+        'Asked about his workout → winces and rubs his sore shoulder, then sits back again.',
       ],
       answer: 1,
-      insight: 'Forehead rubbing is a pacifier, and it\'s new for Nate. It came on the timeline question, not the accusation or the bruised knuckles. Evidence isn\'t behavior: judge the change, not how guilty an answer sounds.',
+      insight: 'Forehead rubbing is a pacifier, and it\'s new for Nate. It came on the timeline question, not the accusation or the bruised knuckles. Evidence isn\'t behavior: judge the change, not how guilty an answer sounds. Rubbing a sore shoulder after a workout has an obvious cause; the forehead rub doesn\'t.',
     ),
     Challenge.micro(
       id: 'm11',
@@ -1962,9 +1995,10 @@ class Curriculum {
         'Asked if she signed for the box → laughs, hands wide: "Nope, I wasn\'t even here!"',
         'Asked who was at the front desk → rapid-fire, gesturing, names Kevin and laughs.',
         'Asked if the questions annoy her → laughs, hands up: "A little bit, yeah!"',
+        'Asked about the delivery driver → stops mid-laugh to answer a text from her boss.',
       ],
       answer: Challenge.clean,
-      insight: 'Every answer matches her baseline: fast, gesturing, laughing. "Nope, I wasn\'t even here" is a direct denial, and admitting she\'s a little annoyed is normal. Calling a lie here would be a false alarm, the most common mistake new analysts make.',
+      insight: 'Every answer matches her baseline: fast, gesturing, laughing. "Nope, I wasn\'t even here" is a direct denial, and admitting she\'s a little annoyed is normal. Calling a lie here would be a false alarm, the most common mistake new analysts make. Even the pause to answer her boss had an outside cause, so nothing here counts.',
     ),
     Challenge.baseline(
       id: 'bc2',
@@ -1975,9 +2009,10 @@ class Curriculum {
         'Asked if he saw the crack → looks down, pauses, slowly: "Not until Lisa pointed it out."',
         'Asked if he broke it → still, eyes down for a moment, then: "No. I didn\'t touch it."',
         'Asked who else was in early → slow and quiet, names two people, hands still.',
+        'Asked about the window repair → a siren passes outside; he looks up at it, then back down.',
       ],
       answer: Challenge.clean,
-      insight: 'Looking down before answering is Omar\'s normal thinking pattern, and the pause before "No" matches his slow baseline. Without a change, there\'s no signal: behavior means nothing on its own, only change does.',
+      insight: 'Looking down before answering is Omar\'s normal thinking pattern, and the pause before "No" matches his slow baseline. Without a change, there\'s no signal: behavior means nothing on its own, only change does. Even looking up at a passing siren had an outside cause.',
     ),
     Challenge.baseline(
       id: 'bc3',
@@ -1989,9 +2024,10 @@ class Curriculum {
         'Asked if she added personal charges → uncrosses her legs, ring in hand: "No, never."',
         'Asked who approved the trip → crosses her legs, clears her throat, names her manager.',
         'Asked about the taxi receipts → twists her ring and explains each ride by date.',
+        'Asked about the conference → her water glass tips; she catches it, then twists her ring.',
       ],
       answer: Challenge.clean,
-      insight: 'She looks like a nervous wreck, but every behavior was there from the moment she sat down. Restless people don\'t become liars by staying restless. Being able to say "nothing here" is part of mastering baselines.',
+      insight: 'She looks like a nervous wreck, but every behavior was there from the moment she sat down. Restless people don\'t become liars by staying restless. Being able to say "nothing here" is part of mastering baselines. Even catching the tipping glass had an outside cause.',
     ),
     Challenge.statement(
       id: 'sc1',
@@ -2136,9 +2172,10 @@ class Curriculum {
         'Asked where he sat that day → rubs his eyes, steady voice: "By the window, like always."',
         'Asked who left the office last → steady and even, names Carla and the cleaner.',
         'Asked if he\'d agree to a bag search → tugs his collar, shrugs: "Sure, go ahead."',
+        'Asked about the cleaners → the lights flicker; he looks up, then answers in his steady voice.',
       ],
       answer: Challenge.clean,
-      insight: 'This is the classic trap: a "No" with a collar tug and eye rubbing looks guilty, but both are Jamal\'s baseline. With no change from normal, there\'s no signal.',
+      insight: 'This is the classic trap: a "No" with a collar tug and eye rubbing looks guilty, but both are Jamal\'s baseline. With no change from normal, there\'s no signal. Even looking up at the flickering lights had an outside cause.',
     ),
     Challenge.baseline(
       id: 'bc5',
@@ -2149,9 +2186,10 @@ class Curriculum {
         'Asked where she parked it → soft voice, eyes down: "Hotel garage, level three."',
         'Asked if she took photos at pickup → picks at her nails: "No, I didn\'t think to."',
         'Asked when she returned it → glances away, softly: "Sunday, around noon."',
+        'Asked about the rental desk → her phone alarm goes off; she fumbles to stop it, apologizing.',
       ],
       answer: Challenge.clean,
-      insight: 'Looking down and fidgeting feel guilty, but they\'re Lucy\'s normal. Admitting she didn\'t take photos, which doesn\'t help her case, is consistent with honesty.',
+      insight: 'Looking down and fidgeting feel guilty, but they\'re Lucy\'s normal. Admitting she didn\'t take photos, which doesn\'t help her case, is consistent with honesty. Even fumbling with her phone alarm had an outside cause.',
     ),
     Challenge.baseline(
       id: 'bc6',
@@ -2163,9 +2201,10 @@ class Curriculum {
         'Asked about his parents → touches his neck, laughs: "My mom will kill me for being here."',
         'Asked which class he was in → bounces his knee, laughs: "Chemistry. Mr. Patel."',
         'Asked who might have done it → knee bouncing, a shrug, nervous laugh: "No clue."',
+        'Asked about lunch → the school bell rings; he jumps, laughs, keeps bouncing his knee.',
       ],
       answer: Challenge.clean,
-      insight: 'A nervous teenager in the principal\'s office: everything here matched his baseline, including touching his neck on a personal topic. Nervous isn\'t guilty, even in high-load cases.',
+      insight: 'A nervous teenager in the principal\'s office: everything here matched his baseline, including touching his neck on a personal topic. Nervous isn\'t guilty, even in high-load cases. Even jumping at the bell had an outside cause.',
     ),
     Challenge.baseline(
       id: 'bc7',
@@ -2177,9 +2216,10 @@ class Curriculum {
         'Asked when she last saw it → pauses: "At 5:10, when I put it in the drop safe."',
         'Asked who has the safe code → pauses, then names herself and the manager.',
         'Asked if she\'s ever been short before → pauses: "Once, in 2019, by twelve dollars."',
+        'Asked about her drive home → she sneezes, excuses herself, then pauses and answers.',
       ],
       answer: Challenge.clean,
-      insight: 'Pauses can feel like stalling, but Diane pauses before everything. Precise answers and volunteering an old shortage against herself fit honesty.',
+      insight: 'Pauses can feel like stalling, but Diane pauses before everything. Precise answers and volunteering an old shortage against herself fit honesty. Even the sneeze had an outside cause.',
     ),
     Challenge.statement(
       id: 'sc4',
@@ -2407,8 +2447,8 @@ class GameState extends ChangeNotifier {
 
   /// Difficulty scaling looks at the last [rollingWindow] answers.
   static const int rollingWindow = 10;
-  static const int minSamplesForScaling = 5;
-  static const double highLoadThreshold = 0.8;
+  static const int minSamplesForScaling = 4;
+  static const double highLoadThreshold = 0.7;
 
   int hearts = maxHearts;
   int insightPoints = 0;
@@ -3046,7 +3086,7 @@ class _MindTreeScreenState extends State<MindTreeScreen> {
         const InfoBanner(
           icon: Icons.bolt,
           color: Palette.purple,
-          text: 'High Cognitive Load is ON. Your accuracy is above 80%, so new questions bury the flags deeper.',
+          text: 'High Cognitive Load is ON. Your accuracy is above 70%, so new questions bury the flags deeper.',
           padding: EdgeInsets.only(top: 12),
         ),
     ];
@@ -4072,7 +4112,7 @@ class _QuestScreenState extends State<QuestScreen> with SingleTickerProviderStat
                 icon: Icons.bolt,
                 color: Palette.purple,
                 text: _justEscalated
-                    ? 'HIGH COGNITIVE LOAD: accuracy above 80%. Flags are now buried in ordinary dialogue.'
+                    ? 'HIGH COGNITIVE LOAD: accuracy above 70%. Flags are now buried in ordinary dialogue.'
                     : 'High Cognitive Load scenario',
                 padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
               ),
@@ -4080,7 +4120,7 @@ class _QuestScreenState extends State<QuestScreen> with SingleTickerProviderStat
               InfoBanner(
                 icon: Icons.track_changes,
                 color: Palette.gold,
-                text: 'Calibration drill: ${calibrated.label}',
+                text: 'Calibration drill: one of your weak spots',
                 padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
               ),
             Expanded(
@@ -4339,7 +4379,8 @@ class ChallengeView extends StatelessWidget {
     return <Widget>[
       MicroFlashCard(
         description: challenge.context,
-        exposure: Duration(seconds: challenge.highLoad ? 5 : 8),
+        exposure: Duration(seconds: challenge.highLoad ? 3 : 5),
+        allowReflash: !challenge.highLoad,
         revealed: revealed,
       ),
       const SizedBox(height: 16),
@@ -4727,10 +4768,17 @@ class InterviewerBubble extends StatelessWidget {
 /// Level 2 flash card: the description is only visible for a short exposure
 /// window, like a real micro-expression. One re-flash is allowed.
 class MicroFlashCard extends StatefulWidget {
-  const MicroFlashCard({super.key, required this.description, required this.exposure, required this.revealed});
+  const MicroFlashCard({
+    super.key,
+    required this.description,
+    required this.exposure,
+    required this.revealed,
+    this.allowReflash = true,
+  });
   final String description;
   final Duration exposure;
   final bool revealed;
+  final bool allowReflash;
 
   @override
   State<MicroFlashCard> createState() => _MicroFlashCardState();
@@ -4738,7 +4786,7 @@ class MicroFlashCard extends StatefulWidget {
 
 class _MicroFlashCardState extends State<MicroFlashCard> with SingleTickerProviderStateMixin {
   late final AnimationController _timer = AnimationController(vsync: this, duration: widget.exposure);
-  bool _reflashUsed = false;
+  late bool _reflashUsed = !widget.allowReflash;
 
   @override
   void initState() {

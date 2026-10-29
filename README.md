@@ -77,7 +77,7 @@ Progress (both tabs) is saved on the phone with `shared_preferences`; nothing le
 - Hearts regenerate 1 every 2 minutes, +1 on quest completion, or refill for 30 IP.
 - IP: +10 per correct answer, +20 on High Cognitive Load questions, +5 on retries,
   +20 per completed quest, +15 for a flawless quest.
-- Over 80% accuracy across your last 10 answers (minimum 5), upcoming questions
+- Over 70% accuracy across your last 10 answers (minimum 4), upcoming questions
   swap to High Cognitive Load variants where the flag is buried in ordinary dialogue.
 - Every miss is logged per flag (e.g. Verb Tense Shift). Review nodes guarantee
   extra drills on your weakest flag and weight the rest by your misses.
