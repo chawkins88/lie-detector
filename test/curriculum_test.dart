@@ -77,10 +77,16 @@ void main() {
     }
   });
 
-  test('every level with a "nothing here" choice has clean cases', () {
+  test('"nothing here" is the answer often enough to matter', () {
     final levels = challenges.where((c) => c.offersClean).map((c) => c.level).toSet();
     for (final level in levels) {
-      expect(challenges.any((c) => c.level == level && c.isClean), isTrue, reason: 'level $level');
+      final pool = challenges.where((c) => c.level == level && c.offersClean).toList();
+      final clean = pool.where((c) => c.isClean).length;
+      expect(clean / pool.length, greaterThanOrEqualTo(0.3), reason: 'level $level: $clean of ${pool.length}');
+      // Both difficulty tiers need clean cases, since High Load swaps tiers.
+      for (final highLoad in [false, true]) {
+        expect(pool.any((c) => c.isClean && c.highLoad == highLoad), isTrue, reason: 'level $level highLoad=$highLoad');
+      }
     }
   });
 }
