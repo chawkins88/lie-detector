@@ -2439,6 +2439,41 @@ class GameState extends ChangeNotifier {
   /// Memory Gym progress, saved with everything else.
   final MemoryState memory = MemoryState();
 
+  /// Daily answers for the progress chart: day → [answered, correct].
+  final Map<int, List<int>> dayLog = <int, List<int>>{};
+
+  /// The Consultant: best stars per case.
+  final Map<String, int> caseStars = <String, int>{};
+
+  /// Two Truths & a Lie: friend → [rounds, caught].
+  final Map<String, List<int>> realLifeStats = <String, List<int>>{};
+
+  void _logDay(bool correct) {
+    final d = dayIndex();
+    final entry = dayLog.putIfAbsent(d, () => <int>[0, 0]);
+    entry[0]++;
+    if (correct) entry[1]++;
+    dayLog.removeWhere((k, _) => k < d - 90);
+  }
+
+  void recordCase(String id, int stars) {
+    if (stars > (caseStars[id] ?? 0)) caseStars[id] = stars;
+    if (stars > 0) insightPoints += 20 + 10 * stars;
+    _touchStreak();
+    _changed();
+  }
+
+  void recordRealLife(String friend, {required bool correct}) {
+    final s = realLifeStats.putIfAbsent(friend, () => <int>[0, 0]);
+    s[0]++;
+    if (correct) {
+      s[1]++;
+      insightPoints += 5;
+    }
+    _touchStreak();
+    _changed();
+  }
+
   /// Practice hub: best scores, questions to review, daily case.
   final Map<String, int> practiceBest = <String, int>{};
   final Set<String> mistakes = <String>{};
@@ -2469,6 +2504,7 @@ class GameState extends ChangeNotifier {
     }
     insightPoints += ip;
     _trackMistake(c, correct);
+    _logDay(correct);
     _changed();
   }
 
@@ -2603,6 +2639,7 @@ class GameState extends ChangeNotifier {
       _nextHeartAt ??= DateTime.now().add(heartRegenInterval);
     }
     _trackMistake(challenge, correct);
+    _logDay(correct);
     _changed();
     return gain;
   }
@@ -2723,6 +2760,9 @@ class GameState extends ChangeNotifier {
         'practiceBest': practiceBest,
         'mistakes': mistakes.toList(),
         'dailyDone': dailyDoneDay,
+        'dayLog': <String, List<int>>{for (final e in dayLog.entries) '${e.key}': e.value},
+        'caseStars': caseStars,
+        'realLife': realLifeStats,
       };
 
   @visibleForTesting
@@ -2758,6 +2798,24 @@ class GameState extends ChangeNotifier {
       if (saved is List) mistakes.addAll(saved.whereType<String>().where(Curriculum.byId.containsKey));
       final daily = data['dailyDone'];
       dailyDoneDay = daily is int ? daily : null;
+      final log = data['dayLog'];
+      if (log is Map) {
+        log.forEach((Object? k, Object? v) {
+          final day = int.tryParse('$k');
+          if (day != null && v is List && v.length == 2 && v[0] is int && v[1] is int) {
+            dayLog[day] = <int>[v[0] as int, v[1] as int];
+          }
+        });
+      }
+      _readCounts(data['caseStars'], caseStars, <String, String>{for (final c in ConsultantCases.all) c.id: c.id});
+      final real = data['realLife'];
+      if (real is Map) {
+        real.forEach((Object? k, Object? v) {
+          if (k is String && v is List && v.length == 2 && v[0] is int && v[1] is int) {
+            realLifeStats[k] = <int>[v[0] as int, v[1] as int];
+          }
+        });
+      }
     } catch (_) {
       // A damaged save keeps whatever loaded cleanly; the rest stays default.
     }
@@ -3843,6 +3901,8 @@ class CalibrationProfileSheet extends StatelessWidget {
                   ),
                 ],
               ),
+              const SizedBox(height: 16),
+              ProgressChart(game: game),
               const SizedBox(height: 16),
               if (weakest != null)
                 InfoBanner(
@@ -8754,6 +8814,50 @@ class _PracticeHubScreenState extends State<PracticeHubScreen> {
               text: 'Mixed modes use every level you\'ve unlocked so far (up to Level ${game.highestUnlockedLevel}).',
             ),
             const SizedBox(height: 14),
+            _BigModeCard(
+              emoji: '🕵️',
+              title: 'The Consultant',
+              subtitle: 'Interview the suspects, switch between them, and get the guilty one to confess.',
+              status: '${game.caseStars.values.where((s) => s > 0).length}/${ConsultantCases.all.length} cases solved',
+              color: Palette.indigo,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => ConsultantHubScreen(game: game)),
+              ),
+            ),
+            _BigModeCard(
+              emoji: '🎭',
+              title: 'Two Truths & a Lie',
+              subtitle: 'Play with friends in real life. The app tracks how often you catch the lie.',
+              status: game.realLifeStats.isEmpty
+                  ? 'No rounds yet'
+                  : '${game.realLifeStats.values.fold<int>(0, (a, s) => a + s[1])}/'
+                      '${game.realLifeStats.values.fold<int>(0, (a, s) => a + s[0])} caught',
+              color: Palette.pink,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => RealLifeScreen(game: game)),
+              ),
+            ),
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Palette.surface,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: Palette.border, width: 1.5),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const Text('YOUR PROGRESS',
+                      style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+                  const SizedBox(height: 10),
+                  ProgressChart(game: game),
+                ],
+              ),
+            ),
+            const Text('QUICK MODES',
+                style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+            const SizedBox(height: 10),
             for (final mode in PracticeMode.values)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
@@ -8803,6 +8907,65 @@ class _PracticeHubScreenState extends State<PracticeHubScreen> {
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BigModeCard extends StatelessWidget {
+  const _BigModeCard({
+    required this.emoji,
+    required this.title,
+    required this.subtitle,
+    required this.status,
+    required this.color,
+    required this.onTap,
+  });
+
+  final String emoji;
+  final String title;
+  final String subtitle;
+  final String status;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: color.withAlpha(36),
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: color.withAlpha(160), width: 1.5),
+            ),
+            child: Row(
+              children: <Widget>[
+                Text(emoji, style: const TextStyle(fontSize: 38)),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(title, style: const TextStyle(color: Palette.textPrimary, fontSize: 18, fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 2),
+                      Text(subtitle, style: const TextStyle(color: Palette.textPrimary, fontSize: 13, height: 1.3)),
+                      const SizedBox(height: 4),
+                      Text(status, style: TextStyle(color: color, fontSize: 12.5, fontWeight: FontWeight.w800)),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right, color: Palette.textMuted),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -10240,6 +10403,1394 @@ class _CoachCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  THE CONSULTANT: interview several suspects and get the guilty one to confess
+// ════════════════════════════════════════════════════════════════════════════
+
+enum AskKind {
+  smallTalk('Small talk', 'Read their baseline first. Costs a question, but makes every later answer meaningful.'),
+  open('"Tell me everything"', 'An open question. Locks in their story before you show any evidence.'),
+  reverse('"Now tell it backwards"', 'Reverse order is easy for real memories and hard for rehearsed ones. Ask after their story.'),
+  detail('Ask for detail', 'Pin down the key time window. Truthful people add checkable detail; liars stay vague.'),
+  unexpected('Unexpected question', 'Something they didn\'t prepare for. Liars rehearse the obvious questions only.'),
+  pressure('"I know you\'re lying"', 'Pure pressure. Usually backfires: innocent and guilty both get defensive.');
+
+  const AskKind(this.label, this.tip);
+  final String label;
+  final String tip;
+}
+
+class CaseEvidence {
+  const CaseEvidence(this.id, this.name, this.detail, {this.implicates = false});
+  final String id;
+  final String name;
+  final String detail;
+
+  /// True if it contradicts the guilty suspect's story.
+  final bool implicates;
+}
+
+/// Each line is "[behavior] words". The behavior part is optional.
+class SuspectScript {
+  const SuspectScript({
+    required this.name,
+    required this.emoji,
+    required this.role,
+    required this.answers,
+    required this.evidence,
+    required this.accused,
+    this.evidenceEarly = const <String, String>{},
+    this.confession,
+  });
+
+  final String name;
+  final String emoji;
+  final String role;
+  final Map<AskKind, String> answers;
+
+  /// Response to each evidence item once their story is locked in (or always, for innocents).
+  final Map<String, String> evidence;
+
+  /// Guilty suspect only: response if shown implicating evidence before telling their story.
+  final Map<String, String> evidenceEarly;
+  final String accused;
+  final String? confession;
+}
+
+class ConsultantCase {
+  const ConsultantCase({
+    required this.id,
+    required this.title,
+    required this.briefing,
+    required this.detailQuestion,
+    required this.unexpectedQuestions,
+    required this.evidence,
+    required this.suspects,
+    required this.guilty,
+    required this.debrief,
+    this.questionBudget = 15,
+  });
+
+  final String id;
+  final String title;
+  final String briefing;
+  final String detailQuestion;
+
+  /// One unexpected question per suspect (same order as [suspects]).
+  final List<String> unexpectedQuestions;
+  final List<CaseEvidence> evidence;
+  final List<SuspectScript> suspects;
+  final int guilty;
+  final String debrief;
+  final int questionBudget;
+}
+
+class ConsultantCases {
+  ConsultantCases._();
+
+  static const int confessAt = 70;
+  static const int accusations = 2;
+
+  static const List<ConsultantCase> all = <ConsultantCase>[
+    ConsultantCase(
+      id: 'tips',
+      title: 'The Missing Tips',
+      briefing: 'At Rosa\'s Diner, \$600 in tips vanished from the tip jar at closing on Friday. The jar was on the '
+          'counter at 10:00 PM and gone by 10:30. Three people were still working.',
+      detailQuestion: 'What exactly were you doing between 10:00 and 10:20?',
+      unexpectedQuestions: <String>[
+        'What did the kitchen look like when you left?',
+        'What was the last thing you threw away tonight?',
+        'What was the score of the game on the radio?',
+      ],
+      evidence: <CaseEvidence>[
+        CaseEvidence('door', 'Back door camera',
+            'The kitchen\'s back door opened at 10:12 PM. Too dark to see a face, but the person carried a trash bag.',
+            implicates: true),
+        CaseEvidence('bag', 'The trash bag',
+            'The empty tip jar was found in the dumpster inside a black, heavy-duty bag. The kitchen uses black bags; servers use clear ones.',
+            implicates: true),
+        CaseEvidence('clock', 'Time clock',
+            'Mia clocked out at 9:55 PM, Dev at 10:20 PM, Ron at 10:31 PM.'),
+      ],
+      guilty: 1,
+      suspects: <SuspectScript>[
+        SuspectScript(
+          name: 'Mia',
+          emoji: '👩‍🦰',
+          role: 'Server',
+          answers: <AskKind, String>{
+            AskKind.smallTalk: '[talks fast, clicks her pen] Busy week! Double shifts, my feet are dead. Sorry, I talk fast when I\'m tired.',
+            AskKind.open: '[talks fast, clicks her pen] I finished my tables around 9:30, rolled silverware, cashed out with Ron at 9:45 '
+                'and clocked out at 9:55. My boyfriend was late picking me up, so I waited by the host stand until about 10:05.',
+            AskKind.reverse: '[clicks her pen] Okay, backwards: boyfriend pulled up, I was waiting by the host stand, I clocked out… '
+                'oh wait, I grabbed my jacket from the break room first, then clocked out. Before that I cashed out with Ron.',
+            AskKind.detail: '[talks fast] By the host stand on my phone, texting my boyfriend "where are you". Kevin the busser was '
+                'stacking chairs right next to me. Ask him.',
+            AskKind.unexpected: '[thinks for a second] I didn\'t go back there at the end, honestly. The lights were on and I could hear '
+                'the dish machine.',
+            AskKind.pressure: '[pen clicking faster] Excuse me? I\'ve worked here three years. Check the cameras, I was out front.',
+          },
+          evidence: <String, String>{
+            'door': '10:12? I was out front, or already in the car. The back door\'s in the kitchen. I had no reason to go back there.',
+            'bag': 'Black bags are kitchen bags. We use the clear ones up front.',
+            'clock': 'Yep, 9:55. That\'s me.',
+          },
+          accused: '[stops clicking her pen] No. Ask Kevin, ask my boyfriend. I was out front the whole time.',
+        ),
+        SuspectScript(
+          name: 'Dev',
+          emoji: '🧑‍🍳',
+          role: 'Line cook',
+          answers: <AskKind, String>{
+            AskKind.smallTalk: '[arms crossed, steady eye contact] Fine. Tired. Long week.',
+            AskKind.open: '[arms crossed, steady eye contact] I closed the line. Scraped the grill, wrapped everything, mopped. '
+                'Clocked out at 10:20 and went home. Didn\'t take anything out.',
+            AskKind.reverse: '[looks away for the first time] Backwards? Clocked out… before that I mopped… before that, uh… scraped '
+                'the grill. And the line.',
+            AskKind.detail: '[uncrosses his arms and rubs the back of his neck] Mopping. The whole time.',
+            AskKind.unexpected: '[long pause, looks at the floor] …I don\'t know. Food scraps? I told you, I didn\'t take anything out.',
+            AskKind.pressure: '[arms crossed tighter] I don\'t have to listen to this.',
+          },
+          evidenceEarly: <String, String>{
+            'door': '[steady eye contact] Somebody took trash out. Probably the dishwasher. I was mopping.',
+            'bag': '[shrugs] Anybody can grab a kitchen bag.',
+          },
+          evidence: <String, String>{
+            'door': '[long pause, looks away] I… okay, maybe I took one bag out. I forgot. It\'s not a big deal.',
+            'bag': '[voice drops, rubs his neck] That bag… I don\'t know how the jar got in there.',
+            'clock': '[arms crossed] 10:20. Like I said.',
+          },
+          accused: '[arms crossed, steady eye contact] You\'ve got nothing. I mopped and went home.',
+          confession: '[long silence, then quietly] …Fine. I took it. They cut my hours and rent was due. I dropped the jar in a '
+              'trash bag at 10:12 and pulled it out of the dumpster after I clocked out. I was going to pay it back.',
+        ),
+        SuspectScript(
+          name: 'Ron',
+          emoji: '👴',
+          role: 'Manager',
+          answers: <AskKind, String>{
+            AskKind.smallTalk: '[laughs, adjusts his glasses] Oh, you know. Keeping the ship afloat.',
+            AskKind.open: '[speaks slowly] Counted the register with Mia at 9:45, then did paperwork in the office with the door shut: '
+                'the sales report, then next week\'s schedule. Walked the floor at 10:25, set the alarm, out at 10:31.',
+            AskKind.reverse: '[adjusts his glasses] Alarm at 10:31, walked the floor, paperwork… the schedule first, actually, then '
+                'sales numbers. And before that the register with Mia.',
+            AskKind.detail: '[speaks slowly] In the office, door closed, the game on the radio. I heard the dish machine and somebody '
+                'banging around in the kitchen. Mopping, I figured.',
+            AskKind.unexpected: '[laughs] Three to one Rangers, last I heard, and they blew it in the ninth. I was yelling at the radio.',
+            AskKind.pressure: '[laughs, but annoyed] I\'m the one who called you. Why would I report my own theft?',
+          },
+          evidence: <String, String>{
+            'door': '[adjusts his glasses] 10:12… I was in the office. You can\'t see the back door from there. Huh.',
+            'bag': 'Black bags are kitchen. Servers don\'t touch those.',
+            'clock': 'That matches. Dev was the last one in the kitchen.',
+          },
+          accused: '[laughs in disbelief] I called this in! Check the office camera, I never left that chair.',
+        ),
+      ],
+      debrief: 'Dev did it. His story left out the trash run ("didn\'t take anything out"). Once he\'d locked that in, the door '
+          'camera and the kitchen bag contradicted him. His behavior also broke HIS baseline: steady eye contact turned into '
+          'looking away, crossed arms into neck rubbing. Mia\'s fast talk and pen clicking were her normal, and Ron gave '
+          'details you could check (the radio, the score). Pressure only made Dev shut down.',
+    ),
+    ConsultantCase(
+      id: 'exam',
+      title: 'The Leaked Exam',
+      briefing: 'The answer key to Ms. Grant\'s chemistry final appeared in a student group chat at 7:40 PM Thursday. The key '
+          'was printed after school, and three people could have reached it.',
+      detailQuestion: 'Where were you, exactly, between 3:45 and 4:10?',
+      unexpectedQuestions: <String>[
+        'What were the handouts you were stapling about?',
+        'Which class\'s labs were you grading?',
+        'What did you find in the science wing trash?',
+      ],
+      evidence: <CaseEvidence>[
+        CaseEvidence('print', 'Printer log',
+            'The answer key was printed at 3:52 PM from Ms. Grant\'s classroom computer.'),
+        CaseEvidence('key', 'Supply-room key log',
+            'The key to the supply room (where the printer is) was signed out at 3:45 PM by "T." and returned at 4:10 PM.',
+            implicates: true),
+        CaseEvidence('photo', 'The leaked photo',
+            'The photo shows the key on a wooden student desk, with a blue-striped notebook in the corner.',
+            implicates: true),
+      ],
+      guilty: 0,
+      suspects: <SuspectScript>[
+        SuspectScript(
+          name: 'Tyler',
+          emoji: '👦',
+          role: 'Student aide',
+          answers: <AskKind, String>{
+            AskKind.smallTalk: '[smiles, lots of eye contact] Pretty good! Soccer game Saturday, we\'re playing Central.',
+            AskKind.open: '[smiles, eye contact] I helped Ms. Grant after school until like four, stapled handouts, then went home '
+                'and did homework all night. I didn\'t even check my phone.',
+            AskKind.reverse: '[smile fades] Uh… homework, before that I went home, before that stapled… handouts. And helped.',
+            AskKind.detail: '[answers instantly, smile gone] In the classroom. Stapling. The whole time.',
+            AskKind.unexpected: '[pause] …Something for history? I didn\'t really read them.',
+            AskKind.pressure: '[smiling again] I\'m a good student. Why would I need to cheat?',
+          },
+          evidenceEarly: <String, String>{
+            'key': '[smiles] "T" could be anyone.',
+            'photo': '[shrugs] Tons of people have notebooks like that.',
+          },
+          evidence: <String, String>{
+            'print': '[eye contact] She prints stuff all the time.',
+            'key': '[smile drops, voice quieter] …I signed it out to get paper. I forgot. That\'s not a crime.',
+            'photo': '[touches his neck, voice cracks] That\'s… a lot of people have that notebook.',
+          },
+          accused: '[smiling, eye contact] No way. I was stapling handouts.',
+          confession: '[looks down, quiet] Okay. When I got paper, the key was on the printer. I took a picture and sent it to one '
+              'person. I didn\'t think it would go everywhere.',
+        ),
+        SuspectScript(
+          name: 'Ms. Grant',
+          emoji: '👩‍🏫',
+          role: 'Chemistry teacher',
+          answers: <AskKind, String>{
+            AskKind.smallTalk: '[pauses before answering, hands folded] Busy. Finals week is always busy.',
+            AskKind.open: '[pauses, hands folded] I printed the key at 3:52 to check the formatting, then locked it in my desk '
+                'drawer. Tyler helped with handouts until about four. I graded until 5:30 and drove home.',
+            AskKind.reverse: '[pauses] Drove home at 5:30, graded, Tyler left around four… no, ten past four… and before that I '
+                'printed the key and locked it away.',
+            AskKind.detail: '[pauses, hands folded] At my desk grading. Tyler was at the side table, but he stepped out for about '
+                'twenty minutes to get printer paper.',
+            AskKind.unexpected: '[pauses] Third period\'s titration lab. Half of them forgot their units.',
+            AskKind.pressure: '[pauses] I understand you have to ask. No.',
+          },
+          evidence: <String, String>{
+            'print': '[hands folded] Yes, that was me, checking the formatting.',
+            'key': '[pauses] "T" would be Tyler. I sent him for paper around then.',
+            'photo': '[pauses] That isn\'t my desk. Mine is gray metal. That\'s a wooden student desk.',
+          },
+          accused: '[pauses, hands folded] I printed it and locked it away. I would not leak my own exam.',
+        ),
+        SuspectScript(
+          name: 'Jordan',
+          emoji: '🧔',
+          role: 'Custodian',
+          answers: <AskKind, String>{
+            AskKind.smallTalk: '[laughs, scratches his beard] Can\'t complain. Well, I can, but nobody listens.',
+            AskKind.open: '[slow, laid back] Shift starts at four. Gym first, science wing around six. Checked the printer room at '
+                'six-thirty, locked. Left at eleven.',
+            AskKind.reverse: '[scratches his beard] Left at eleven, mopped the cafeteria, science wing around six, printer room locked, '
+                'gym first. Yeah.',
+            AskKind.detail: '[laughs] At 3:45 I was in my truck in the lot eating lunch. Shift doesn\'t start till four.',
+            AskKind.unexpected: '[scratches his beard] Broken beaker in Grant\'s room, papers, a granola bar wrapper. The usual.',
+            AskKind.pressure: '[laughs] Man, I can barely work the copier.',
+          },
+          evidence: <String, String>{
+            'print': '[shrugs] Don\'t know nothing about printers.',
+            'key': '[laughs] That\'s not my initial. Mine\'s J.',
+            'photo': '[squints] I don\'t even have that chat app.',
+          },
+          accused: '[laughs] Wasn\'t even inside at 3:45. Check the parking lot camera.',
+        ),
+      ],
+      debrief: 'Tyler did it. He committed to "stapling the whole time", then the key log ("T", 3:45–4:10) and Ms. Grant\'s '
+          'detail (he stepped out for paper) broke his story. The unexpected question exposed him too: he said the handouts '
+          'were for history, but Ms. Grant teaches chemistry. His smile and eye contact were his baseline; the smile dropping '
+          'was the change. Ms. Grant\'s long pauses were HER normal, not stalling.',
+    ),
+    ConsultantCase(
+      id: 'car',
+      title: 'The Hit-and-Run',
+      briefing: 'Someone backed into a neighbor\'s parked car outside the grocery store on Saturday around 2 PM and drove off. '
+          'Three neighbors were at that shopping center then.',
+      detailQuestion: 'What were you doing between 2:00 and 2:10?',
+      unexpectedQuestions: <String>[
+        'Who was parked next to you?',
+        'What size hinge did you buy?',
+        'What did you order?',
+      ],
+      evidence: <CaseEvidence>[
+        CaseEvidence('paint', 'Paint scrape', 'Blue paint was scraped onto the victim\'s rear bumper.', implicates: true),
+        CaseEvidence('camera', 'Store camera', 'A blue SUV left the lot fast at 2:09 PM. The plate isn\'t readable.',
+            implicates: true),
+        CaseEvidence('receipt', 'Receipt on the windshield',
+            'A coffee shop receipt from 2:12 PM was stuck under the victim\'s wiper. No note.'),
+      ],
+      guilty: 0,
+      suspects: <SuspectScript>[
+        SuspectScript(
+          name: 'Alicia',
+          emoji: '👩',
+          role: 'Drives a blue SUV',
+          answers: <AskKind, String>{
+            AskKind.smallTalk: '[laughs, talks with her hands] Oh, it\'s been a week! My kid\'s birthday party, total chaos.',
+            AskKind.open: '[talks with her hands] Grabbed groceries around two, loaded the car and drove home. Normal Saturday.',
+            AskKind.reverse: '[hands go still] Got home… before that I drove… before that I loaded the groceries. And shopped.',
+            AskKind.detail: '[hands still in her lap] Loading groceries. I was parked way at the end, nowhere near anybody.',
+            AskKind.unexpected: '[looks away] …I didn\'t notice. Nobody, maybe.',
+            AskKind.pressure: '[laughs, hands moving again] Wow. Okay. I have a perfect driving record.',
+          },
+          evidenceEarly: <String, String>{
+            'paint': '[laughs] Lots of cars are blue.',
+            'camera': '[talks with her hands] Half the town drives an SUV.',
+          },
+          evidence: <String, String>{
+            'paint': '[hands still, voice drops] Blue… I mean, I did bump something backing out, but I thought it was a cart.',
+            'camera': '[no laugh] I was in a hurry. My ice cream was melting.',
+            'receipt': '[talks with her hands] Not mine. I paid with my phone.',
+          },
+          accused: '[laughs, hands moving] Me? I was nowhere near that car.',
+          confession: '[quiet, hands still] Okay. I backed into it. I panicked and just drove. I\'ll pay for the damage.',
+        ),
+        SuspectScript(
+          name: 'Chris',
+          emoji: '👨',
+          role: 'Drives a red pickup',
+          answers: <AskKind, String>{
+            AskKind.smallTalk: '[arms crossed, short sentences] Fine. Busy.',
+            AskKind.open: '[arms crossed] Hardware store at 1:30. Bought a hinge. Left at 1:50. Drove home.',
+            AskKind.reverse: '[arms crossed] Home. Drove. Left the store at 1:50. Bought a hinge. Got there 1:30.',
+            AskKind.detail: '[arms crossed] On Route 9 by then. Gas station receipt at 2:04 says so.',
+            AskKind.unexpected: '[arms crossed] Three-and-a-half inch. Brass. For the shed door.',
+            AskKind.pressure: '[arms crossed] Check my truck. Not a scratch on it.',
+          },
+          evidence: <String, String>{
+            'paint': '[arms crossed] My truck\'s red.',
+            'camera': '[arms crossed] Not an SUV.',
+            'receipt': '[arms crossed] Wasn\'t at the coffee shop.',
+          },
+          accused: '[arms crossed] I was on Route 9. Check the gas station camera.',
+        ),
+        SuspectScript(
+          name: 'Sam',
+          emoji: '🧑‍🦱',
+          role: 'Drives a blue sedan',
+          answers: <AskKind, String>{
+            AskKind.smallTalk: '[talks fast, touches his face] Good! Sorry, I always get nervous talking to officials.',
+            AskKind.open: '[talks fast, touches his face] Sorry, okay. I went into the coffee shop at 1:55, came out at 2:15. My car '
+                'was right out front. Sorry, I get nervous with this stuff.',
+            AskKind.reverse: '[touches his face] Drove home, came out at 2:15, got coffee… oh, and I parked first, obviously. Sorry.',
+            AskKind.detail: '[talks fast] In line. It was super long. I have the receipt, look: 2:12.',
+            AskKind.unexpected: '[laughs nervously, touches his face] Large oat latte, extra shot. Sorry, that\'s embarrassing.',
+            AskKind.pressure: '[touches his face, talks faster] Sorry, I mean, no! I didn\'t hit anything!',
+          },
+          evidence: <String, String>{
+            'paint': '[touches his face] My car\'s blue, but look, no scratches. You can check.',
+            'camera': '[talks fast] I drive a sedan, not an SUV.',
+            'receipt': '[talks fast] That\'s not mine. Mine says 2:12 too… huh, they must print a lot of receipts.',
+          },
+          accused: '[touches his face] I was in line for coffee! The barista knows me!',
+        ),
+      ],
+      debrief: 'Alicia did it. She claimed she was "nowhere near anybody" but couldn\'t say who parked next to her, and the '
+          'blue paint and the SUV on camera broke her story once she\'d committed to it. Her baseline is animated and laughing; '
+          'her hands going still was the change. Sam is nervous ALL the time (touching his face, apologizing). Nervous isn\'t '
+          'guilty. The receipt was a red herring.',
+    ),
+  ];
+}
+
+/// The state of one investigation.
+class Investigation {
+  Investigation(this.file)
+      : transcripts = List<List<String>>.generate(file.suspects.length, (_) => <String>[]),
+        asked = List<Set<String>>.generate(file.suspects.length, (_) => <String>{}),
+        told = List<bool>.filled(file.suspects.length, false);
+
+  final ConsultantCase file;
+  final List<List<String>> transcripts;
+  final List<Set<String>> asked;
+  final List<bool> told;
+  int questionsUsed = 0;
+  int accusationsLeft = ConsultantCases.accusations;
+  int crack = 0;
+  int goodMoves = 0;
+  int pressureMoves = 0;
+  bool solved = false;
+  bool over = false;
+
+  int get questionsLeft => file.questionBudget - questionsUsed;
+  bool get outOfQuestions => questionsLeft <= 0;
+
+  String questionText(AskKind kind, int suspect) => switch (kind) {
+        AskKind.smallTalk => 'How\'s your week been?',
+        AskKind.open => 'Tell me everything about that evening, from the start.',
+        AskKind.reverse => 'Now tell it to me backwards, from the end.',
+        AskKind.detail => file.detailQuestion,
+        AskKind.unexpected => file.unexpectedQuestions[suspect],
+        AskKind.pressure => 'I know you\'re lying. Just admit it.',
+      };
+
+  void ask(int s, AskKind kind) {
+    asked[s].add(kind.name);
+    questionsUsed++;
+    final script = file.suspects[s];
+    final guilty = s == file.guilty;
+    String answer;
+    if (kind == AskKind.reverse && !told[s]) {
+      answer = '[confused] Backwards from what? I haven\'t told you my side yet.';
+    } else {
+      answer = script.answers[kind]!;
+    }
+    transcripts[s]
+      ..add('Q:${questionText(kind, s)}')
+      ..add('A:$answer');
+    if (kind == AskKind.open) told[s] = true;
+    if (kind == AskKind.pressure) {
+      pressureMoves++;
+      if (guilty) crack = math.max(0, crack - 10);
+      return;
+    }
+    if (!guilty) return;
+    final gain = switch (kind) {
+      AskKind.open => 5,
+      AskKind.reverse => told[s] ? 20 : 0,
+      AskKind.detail => told[s] ? 15 : 5,
+      AskKind.unexpected => 15,
+      _ => 0,
+    };
+    if (gain >= 15) goodMoves++;
+    crack += gain;
+  }
+
+  void show(int s, CaseEvidence e) {
+    asked[s].add('ev:${e.id}');
+    questionsUsed++;
+    final script = file.suspects[s];
+    final guilty = s == file.guilty;
+    final early = guilty && e.implicates && !told[s];
+    final answer = early
+        ? (script.evidenceEarly[e.id] ?? script.evidence[e.id]!)
+        : script.evidence[e.id]!;
+    transcripts[s]
+      ..add('Q:Take a look at this: ${e.name}.')
+      ..add('A:$answer');
+    if (guilty && e.implicates) {
+      final gain = early ? 10 : 35;
+      if (!early) goodMoves++;
+      crack += gain;
+    }
+  }
+
+  /// Returns the suspect's reply.
+  String accuse(int s) {
+    final script = file.suspects[s];
+    final guilty = s == file.guilty;
+    String reply;
+    if (guilty && crack >= ConsultantCases.confessAt) {
+      solved = true;
+      over = true;
+      reply = script.confession!;
+    } else {
+      accusationsLeft--;
+      if (guilty) crack = math.max(0, crack - 10);
+      reply = script.accused;
+      if (accusationsLeft <= 0) over = true;
+    }
+    transcripts[s]
+      ..add('Q:I think you did it.')
+      ..add('A:$reply');
+    return reply;
+  }
+
+  int get stars {
+    if (!solved) return 0;
+    if (questionsUsed <= 9 && pressureMoves == 0) return 3;
+    if (questionsUsed <= 12) return 2;
+    return 1;
+  }
+}
+
+/// Splits "[behavior] words" into its two parts.
+(String?, String) splitAnswer(String raw) {
+  if (raw.startsWith('[')) {
+    final end = raw.indexOf(']');
+    if (end > 0) return (raw.substring(1, end), raw.substring(end + 1).trim());
+  }
+  return (null, raw);
+}
+
+// ── Consultant hub ────────────────────────────────────────────────────────
+
+class ConsultantHubScreen extends StatelessWidget {
+  const ConsultantHubScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: SafeArea(
+        child: ListenableBuilder(
+          listenable: game,
+          builder: (context, _) => ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  IconButton(
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    icon: const Icon(Icons.arrow_back, color: Palette.textMuted),
+                  ),
+                  const Expanded(
+                    child: Text(
+                      'The Consultant',
+                      style: TextStyle(color: Palette.textPrimary, fontSize: 24, fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const InfoBanner(
+                icon: Icons.gavel,
+                color: Palette.indigo,
+                text: 'Interview the suspects, switch between them, and get the guilty one to confess. '
+                    'Lock in each story first, then show evidence. Pressure backfires. '
+                    '${ConsultantCases.accusations} accusations, limited questions.',
+              ),
+              const SizedBox(height: 16),
+              for (final c in ConsultantCases.all)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Material(
+                    color: Palette.surface,
+                    borderRadius: BorderRadius.circular(18),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(18),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(builder: (_) => InterrogationScreen(game: game, file: c)),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Row(
+                          children: <Widget>[
+                            Text(c.suspects.map((s) => s.emoji).join(), style: const TextStyle(fontSize: 26)),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: <Widget>[
+                                  Text(
+                                    c.title,
+                                    style: const TextStyle(color: Palette.textPrimary, fontSize: 17, fontWeight: FontWeight.w900),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '${c.suspects.length} suspects · ${c.questionBudget} questions',
+                                    style: const TextStyle(color: Palette.textMuted, fontSize: 13),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Text(
+                              _starText(game.caseStars[c.id] ?? 0),
+                              style: const TextStyle(fontSize: 16, color: Palette.gold),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _starText(int stars) => stars == 0 ? 'unsolved' : '★' * stars + '☆' * (3 - stars);
+}
+
+// ── Interrogation room ────────────────────────────────────────────────────
+
+class InterrogationScreen extends StatefulWidget {
+  const InterrogationScreen({super.key, required this.game, required this.file});
+  final GameState game;
+  final ConsultantCase file;
+
+  @override
+  State<InterrogationScreen> createState() => _InterrogationScreenState();
+}
+
+class _InterrogationScreenState extends State<InterrogationScreen> {
+  late Investigation _inv = Investigation(widget.file);
+  late List<int> _order = _shuffledOrder();
+  int _current = 0;
+  bool _briefed = false;
+  final ScrollController _scroll = ScrollController();
+
+  ConsultantCase get file => widget.file;
+
+  List<int> _shuffledOrder() => List<int>.generate(widget.file.suspects.length, (i) => i)..shuffle();
+
+  int get _suspect => _order[_current];
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _scrollToEnd() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scroll.hasClients) {
+        _scroll.animateTo(_scroll.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+      }
+    });
+  }
+
+  void _afterMove() {
+    HapticFeedback.selectionClick();
+    setState(() {});
+    _scrollToEnd();
+    if (_inv.outOfQuestions && !_inv.over) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(
+          backgroundColor: Palette.surfaceHigh,
+          content: Text('Out of questions. Make your accusation.', style: TextStyle(color: Palette.textPrimary)),
+        ));
+    }
+  }
+
+  void _ask(AskKind kind) {
+    if (_inv.outOfQuestions || _inv.over) return;
+    _inv.ask(_suspect, kind);
+    _afterMove();
+  }
+
+  Future<void> _showEvidence() async {
+    if (_inv.outOfQuestions || _inv.over) return;
+    final picked = await showModalBottomSheet<CaseEvidence>(
+      context: context,
+      backgroundColor: Palette.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+          children: <Widget>[
+            Text(
+              'Show ${file.suspects[_suspect].name} evidence',
+              style: const TextStyle(color: Palette.textPrimary, fontSize: 19, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 4),
+            const Text('Tip: evidence hits hardest after they\'ve told their story.',
+                style: TextStyle(color: Palette.textMuted, fontSize: 13)),
+            const SizedBox(height: 12),
+            for (final e in file.evidence)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: OptionTile(
+                  visual: OptionVisual.idle,
+                  onTap: _inv.asked[_suspect].contains('ev:${e.id}') ? null : () => Navigator.of(sheetContext).pop(e),
+                  leading: Icon(
+                    _inv.asked[_suspect].contains('ev:${e.id}') ? Icons.check : Icons.description,
+                    color: Palette.indigo,
+                  ),
+                  text: '${e.name}: ${e.detail}',
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    _inv.show(_suspect, picked);
+    _afterMove();
+  }
+
+  Future<void> _accuse() async {
+    if (_inv.over) return;
+    final name = file.suspects[_suspect].name;
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: Palette.surface,
+        title: Text('Accuse $name?', style: const TextStyle(color: Palette.textPrimary)),
+        content: Text(
+          'You have ${_inv.accusationsLeft} accusation${_inv.accusationsLeft == 1 ? '' : 's'} left. '
+          'Only accuse when your case is strong enough to make them crack.',
+          style: const TextStyle(color: Palette.textMuted),
+        ),
+        actions: <Widget>[
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('NOT YET')),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('ACCUSE', style: TextStyle(color: Palette.red)),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    _inv.accuse(_suspect);
+    if (_inv.solved) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+    if (_inv.over) widget.game.recordCase(file.id, _inv.stars);
+    setState(() {});
+    _scrollToEnd();
+  }
+
+  void _restart() {
+    setState(() {
+      _inv = Investigation(file);
+      _order = _shuffledOrder();
+      _current = 0;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: SafeArea(
+        child: !_briefed
+            ? _buildBriefing()
+            : (_inv.over ? _buildDebrief() : _buildRoom()),
+      ),
+    );
+  }
+
+  Widget _buildBriefing() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              IconButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+                icon: const Icon(Icons.close, color: Palette.textMuted),
+              ),
+              const Text('CASE FILE', style: TextStyle(color: Palette.indigo, fontWeight: FontWeight.w900, letterSpacing: 1.4)),
+            ],
+          ),
+          Expanded(
+            child: ListView(
+              children: <Widget>[
+                Text(file.title,
+                    style: const TextStyle(color: Palette.textPrimary, fontSize: 28, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 10),
+                Text(file.briefing, style: const TextStyle(color: Palette.textPrimary, fontSize: 16, height: 1.5)),
+                const SizedBox(height: 18),
+                const Text('SUSPECTS',
+                    style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+                const SizedBox(height: 8),
+                for (final s in file.suspects)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: <Widget>[
+                        Text(s.emoji, style: const TextStyle(fontSize: 30)),
+                        const SizedBox(width: 10),
+                        Text('${s.name} · ${s.role}',
+                            style: const TextStyle(color: Palette.textPrimary, fontSize: 16, fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 12),
+                const Text('EVIDENCE',
+                    style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+                const SizedBox(height: 8),
+                for (final e in file.evidence)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: ContextCard(label: e.name.toUpperCase(), icon: Icons.description, text: e.detail, accent: Palette.indigo),
+                  ),
+                const SizedBox(height: 8),
+                InfoBanner(
+                  icon: Icons.lightbulb,
+                  color: Palette.gold,
+                  text: 'Jane\'s method: get each baseline, let them commit to a story, then use the evidence. '
+                      'Budget: ${file.questionBudget} questions, ${ConsultantCases.accusations} accusations.',
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          ChunkyButton(
+            label: 'Enter the interview room',
+            color: Palette.indigo,
+            onPressed: () => setState(() => _briefed = true),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRoom() {
+    final script = file.suspects[_suspect];
+    final transcript = _inv.transcripts[_suspect];
+    final asked = _inv.asked[_suspect];
+    return Column(
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 4, 12, 0),
+          child: Row(
+            children: <Widget>[
+              IconButton(
+                tooltip: 'Leave the case',
+                onPressed: () => Navigator.of(context).maybePop(),
+                icon: const Icon(Icons.close, color: Palette.textMuted),
+              ),
+              Expanded(
+                child: Text(file.title.toUpperCase(),
+                    style: const TextStyle(color: Palette.indigo, fontWeight: FontWeight.w900, letterSpacing: 1)),
+              ),
+              Text('❓ ${_inv.questionsLeft}  ⚖️ ${_inv.accusationsLeft}',
+                  style: const TextStyle(color: Palette.textPrimary, fontWeight: FontWeight.w800)),
+              IconButton(
+                tooltip: 'Case file',
+                onPressed: () => setState(() => _briefed = false),
+                icon: const Icon(Icons.folder_open, color: Palette.textMuted),
+              ),
+            ],
+          ),
+        ),
+        // Suspect switcher
+        SizedBox(
+          height: 88,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            children: <Widget>[
+              for (var i = 0; i < _order.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: GestureDetector(
+                    onTap: () {
+                      HapticFeedback.selectionClick();
+                      setState(() => _current = i);
+                      _scrollToEnd();
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      width: 104,
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      decoration: BoxDecoration(
+                        color: i == _current ? Palette.indigo.withAlpha(50) : Palette.surface,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: i == _current ? Palette.indigo : Palette.border, width: 2),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: <Widget>[
+                          Text(file.suspects[_order[i]].emoji, style: const TextStyle(fontSize: 28)),
+                          Text(
+                            file.suspects[_order[i]].name,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Palette.textPrimary, fontWeight: FontWeight.w800, fontSize: 13),
+                          ),
+                          Text(
+                            '${_inv.transcripts[_order[i]].length ~/ 2} asked',
+                            style: const TextStyle(color: Palette.textMuted, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        // Transcript
+        Expanded(
+          child: transcript.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      '${script.emoji}\n${script.name} sits down across from you.\nStart with small talk to read their baseline.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Palette.textMuted, fontSize: 15, height: 1.5),
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  controller: _scroll,
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                  itemCount: transcript.length,
+                  itemBuilder: (context, i) => _TranscriptLine(raw: transcript[i], suspect: script),
+                ),
+        ),
+        // Actions
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          decoration: const BoxDecoration(
+            color: Palette.surface,
+            border: Border(top: BorderSide(color: Palette.border)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: <Widget>[
+                  for (final kind in AskKind.values)
+                    Tooltip(
+                      message: kind.tip,
+                      triggerMode: TooltipTriggerMode.longPress,
+                      child: ActionChip(
+                        label: Text(kind.label),
+                        onPressed: asked.contains(kind.name) || _inv.outOfQuestions ? null : () => _ask(kind),
+                        backgroundColor: kind == AskKind.pressure ? Palette.red.withAlpha(30) : Palette.surfaceHigh,
+                      ),
+                    ),
+                  ActionChip(
+                    avatar: const Icon(Icons.description, size: 18),
+                    label: const Text('Show evidence'),
+                    onPressed: _inv.outOfQuestions ? null : _showEvidence,
+                    backgroundColor: Palette.indigo.withAlpha(40),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              const Text('Long-press a question to see why it works.',
+                  style: TextStyle(color: Palette.textMuted, fontSize: 11.5)),
+              const SizedBox(height: 8),
+              ChunkyButton(label: 'Accuse ${script.name}', color: Palette.red, height: 46, onPressed: _accuse),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDebrief() {
+    final guilty = file.suspects[file.guilty];
+    final stars = _inv.stars;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Expanded(
+            child: ListView(
+              children: <Widget>[
+                const SizedBox(height: 12),
+                Text(_inv.solved ? '🕵️' : '🗂️', textAlign: TextAlign.center, style: const TextStyle(fontSize: 64)),
+                const SizedBox(height: 8),
+                Text(
+                  _inv.solved ? 'Confession!' : 'Case unsolved',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: _inv.solved ? Palette.gold : Palette.red,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                if (_inv.solved)
+                  Text(
+                    '${'★' * stars}${'☆' * (3 - stars)}  ·  ${_inv.questionsUsed} questions',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Palette.gold, fontSize: 18, fontWeight: FontWeight.w800),
+                  ),
+                const SizedBox(height: 16),
+                if (_inv.solved)
+                  ContextCard(
+                    label: '${guilty.name.toUpperCase()} CONFESSES',
+                    icon: Icons.record_voice_over,
+                    text: splitAnswer(guilty.confession!).$2,
+                    accent: Palette.gold,
+                  ),
+                const SizedBox(height: 12),
+                ContextCard(label: 'DEBRIEF', icon: Icons.lightbulb, text: file.debrief, accent: Palette.indigo),
+                const SizedBox(height: 12),
+                InfoBanner(
+                  icon: Icons.insights,
+                  color: Palette.teal,
+                  text: 'Strong moves: ${_inv.goodMoves} · Pressure moves: ${_inv.pressureMoves}. '
+                      '3 stars = solved in 9 questions or fewer with no pressure.',
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          ChunkyButton(label: 'Done', color: Palette.green, onPressed: () => Navigator.of(context).maybePop()),
+          const SizedBox(height: 6),
+          TextButton(
+            onPressed: () {
+              _restart();
+              setState(() => _briefed = true);
+            },
+            child: const Text('PLAY AGAIN',
+                style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800, letterSpacing: 0.8)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TranscriptLine extends StatelessWidget {
+  const _TranscriptLine({required this.raw, required this.suspect});
+  final String raw;
+  final SuspectScript suspect;
+
+  @override
+  Widget build(BuildContext context) {
+    final isQuestion = raw.startsWith('Q:');
+    final body = raw.substring(2);
+    if (isQuestion) {
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 8, left: 48),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Palette.indigo.withAlpha(60),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Text(body, style: const TextStyle(color: Palette.textPrimary, fontSize: 14.5, fontWeight: FontWeight.w600)),
+        ),
+      );
+    }
+    final (behavior, words) = splitAnswer(body);
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10, right: 32),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Palette.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Palette.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text('${suspect.emoji} ${suspect.name}',
+                style: const TextStyle(color: Palette.textMuted, fontSize: 11.5, fontWeight: FontWeight.w800)),
+            if (behavior != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: Text(behavior,
+                    style: const TextStyle(color: Palette.orange, fontSize: 13, fontStyle: FontStyle.italic)),
+              ),
+            const SizedBox(height: 3),
+            Text('"$words"', style: const TextStyle(color: Palette.textPrimary, fontSize: 15, height: 1.4)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  REAL LIFE: Two Truths and a Lie with friends
+// ════════════════════════════════════════════════════════════════════════════
+
+class RealLifeScreen extends StatefulWidget {
+  const RealLifeScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<RealLifeScreen> createState() => _RealLifeScreenState();
+}
+
+class _RealLifeScreenState extends State<RealLifeScreen> {
+  final TextEditingController _name = TextEditingController();
+  int? _guess;
+  String? _result;
+
+  GameState get game => widget.game;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  void _reveal(int lie) {
+    final friend = _name.text.trim().isEmpty ? 'Friend' : _name.text.trim();
+    final correct = _guess == lie;
+    game.recordRealLife(friend, correct: correct);
+    if (correct) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+    setState(() {
+      _result = correct
+          ? 'You caught $friend\'s lie! 🎯'
+          : '$friend fooled you. The lie was #$lie. What did you miss?';
+      _guess = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final stats = game.realLifeStats;
+    final total = stats.values.fold<int>(0, (a, s) => a + s[0]);
+    final right = stats.values.fold<int>(0, (a, s) => a + s[1]);
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                IconButton(
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.arrow_back, color: Palette.textMuted),
+                ),
+                const Expanded(
+                  child: Text('Two Truths & a Lie',
+                      style: TextStyle(color: Palette.textPrimary, fontSize: 23, fontWeight: FontWeight.w900)),
+                ),
+              ],
+            ),
+            const InfoBanner(
+              icon: Icons.groups,
+              color: Palette.pink,
+              text: 'Real people, real feedback. That\'s how this skill actually improves. A friend tells you three '
+                  'things about themselves; two are true, one is a lie. Ask follow-up questions, then guess.',
+            ),
+            const SizedBox(height: 14),
+            const _HowToRead(),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _name,
+              style: const TextStyle(color: Palette.textPrimary),
+              decoration: InputDecoration(
+                labelText: 'Friend\'s name',
+                labelStyle: const TextStyle(color: Palette.textMuted),
+                filled: true,
+                fillColor: Palette.surface,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text('1. YOUR GUESS: WHICH ONE IS THE LIE?',
+                style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1)),
+            const SizedBox(height: 8),
+            Row(
+              children: <Widget>[
+                for (var i = 1; i <= 3; i++) ...<Widget>[
+                  if (i > 1) const SizedBox(width: 10),
+                  Expanded(
+                    child: ChoiceChip(
+                      label: Text('#$i'),
+                      selected: _guess == i,
+                      onSelected: (_) => setState(() {
+                        _guess = i;
+                        _result = null;
+                      }),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _guess == null ? '2. Then ask which one was the lie' : '2. NOW ASK THEM: WHICH ONE WAS THE LIE?',
+              style: const TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: <Widget>[
+                for (var i = 1; i <= 3; i++) ...<Widget>[
+                  if (i > 1) const SizedBox(width: 10),
+                  Expanded(
+                    child: ChunkyButton(
+                      label: 'It was #$i',
+                      color: Palette.pink,
+                      height: 46,
+                      onPressed: _guess == null ? null : () => _reveal(i),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            if (_result != null) ...<Widget>[
+              const SizedBox(height: 12),
+              InfoBanner(
+                icon: Icons.flag,
+                color: _result!.contains('caught') ? Palette.green : Palette.orange,
+                text: _result!,
+              ),
+            ],
+            const SizedBox(height: 22),
+            const Text('YOUR REAL-LIFE RECORD',
+                style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1)),
+            const SizedBox(height: 8),
+            if (total == 0)
+              const Text('No rounds yet. Chance alone gets about 33%. Your goal is to beat that.',
+                  style: TextStyle(color: Palette.textMuted, fontSize: 14))
+            else ...<Widget>[
+              Text(
+                '$right of $total caught (${(100 * right / total).round()}%)  ·  chance is 33%',
+                style: const TextStyle(color: Palette.textPrimary, fontSize: 16, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              for (final e in (stats.entries.toList()..sort((a, b) => b.value[0].compareTo(a.value[0]))))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(e.key, style: const TextStyle(color: Palette.textPrimary, fontSize: 15)),
+                      ),
+                      Text('${e.value[1]}/${e.value[0]}',
+                          style: const TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HowToRead extends StatelessWidget {
+  const _HowToRead();
+
+  static const List<String> _steps = <String>[
+    'Baseline first: chat for a minute and notice how they normally talk, sit and move.',
+    'After each statement, ask one follow-up: "When was that?" "Who was with you?" Real memories have details ready; lies need building.',
+    'Ask one unexpected question about each, like "What were you wearing?"',
+    'Watch for changes from THEIR baseline, not "nervous" behavior in general.',
+    'Commit to your guess before they reveal, so the feedback counts.',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Palette.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Palette.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text('HOW TO PLAY IT LIKE A CONSULTANT',
+              style: TextStyle(color: Palette.pink, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1)),
+          const SizedBox(height: 8),
+          for (var i = 0; i < _steps.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text('${i + 1}. ${_steps[i]}',
+                  style: const TextStyle(color: Palette.textPrimary, fontSize: 14, height: 1.4)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PROGRESS CHART: daily accuracy, last 14 days
+// ════════════════════════════════════════════════════════════════════════════
+
+class ProgressChart extends StatefulWidget {
+  const ProgressChart({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<ProgressChart> createState() => _ProgressChartState();
+}
+
+class _ProgressChartState extends State<ProgressChart> {
+  static const int days = 14;
+  int? _selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final today = dayIndex();
+    final log = widget.game.dayLog;
+    final points = <({int day, int answered, int correct})>[
+      for (var d = today - days + 1; d <= today; d++)
+        (day: d, answered: log[d]?[0] ?? 0, correct: log[d]?[1] ?? 0),
+    ];
+    double? pct(Iterable<({int day, int answered, int correct})> pts) {
+      final a = pts.fold<int>(0, (s, p) => s + p.answered);
+      if (a == 0) return null;
+      return pts.fold<int>(0, (s, p) => s + p.correct) / a;
+    }
+
+    final thisWeek = pct(points.skip(7));
+    final lastWeek = pct(points.take(7));
+    String fmt(double? v) => v == null ? '–' : '${(v * 100).round()}%';
+    final selected = _selected == null ? null : points[_selected!];
+    const barColor = Palette.blue;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Expanded(child: _MiniStat(label: 'Last 7 days', value: fmt(thisWeek))),
+            const SizedBox(width: 10),
+            Expanded(child: _MiniStat(label: 'Week before', value: fmt(lastWeek))),
+          ],
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 18,
+          child: Text(
+            selected == null
+                ? 'Daily accuracy. Tap a bar for details.'
+                : selected.answered == 0
+                    ? '${today - selected.day == 0 ? 'Today' : '${today - selected.day} days ago'}: no answers'
+                    : '${today - selected.day == 0 ? 'Today' : '${today - selected.day} days ago'}: '
+                        '${selected.correct}/${selected.answered} correct (${(100 * selected.correct / selected.answered).round()}%)',
+            style: const TextStyle(color: Palette.textMuted, fontSize: 12.5),
+          ),
+        ),
+        const SizedBox(height: 6),
+        SizedBox(
+          height: 110,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: <Widget>[
+              for (var i = 0; i < points.length; i++)
+                Expanded(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => setState(() => _selected = _selected == i ? null : i),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 1), // 2px gap between bars
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: <Widget>[
+                          Container(
+                            height: points[i].answered == 0
+                                ? 3
+                                : math.max(4, 100 * points[i].correct / points[i].answered).toDouble(),
+                            decoration: BoxDecoration(
+                              color: points[i].answered == 0
+                                  ? Palette.border
+                                  : (_selected == i ? barColor : barColor.withAlpha(_selected == null ? 255 : 140)),
+                              borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Container(height: 1, color: Palette.border),
+        const SizedBox(height: 4),
+        const Row(
+          children: <Widget>[
+            Text('2 weeks ago', style: TextStyle(color: Palette.textMuted, fontSize: 11)),
+            Spacer(),
+            Text('today', style: TextStyle(color: Palette.textMuted, fontSize: 11)),
+          ],
+        ),
+      ],
     );
   }
 }

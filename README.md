@@ -57,6 +57,10 @@ genuinely truthful, so you practice not crying wolf as well as catching lies.
 
 A third tab for extra reps that never cost hearts:
 
+- **The Consultant**: interview three suspects, switch between them, and get the guilty one to confess.
+  Small talk, open story, reverse order, detail, unexpected questions and evidence build the case; pressure backfires.
+- **Two Truths & a Lie**: a real-life mode for playing with friends that tracks how often you catch the lie.
+- **Your progress**: daily accuracy for the last two weeks, this week vs. last.
 - **Baseline Lab**: endless, freshly generated baseline cases with a best streak.
 - **Speed Round**: 90 seconds across every unlocked level.
 - **Survival**: three strikes, getting harder as your score climbs.
