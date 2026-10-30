@@ -2669,6 +2669,28 @@ class GameState extends ChangeNotifier {
     return extended;
   }
 
+  /// Returns true if this round unlocked the next coach stage.
+  bool recordCoach({required bool passed, required int stageIndex}) {
+    final m = memory;
+    var advanced = false;
+    if (passed) insightPoints += 2;
+    if (stageIndex == m.coachStage) {
+      if (passed) {
+        m.coachStreak++;
+        if (m.coachStreak >= ChunkCoach.passesToAdvance) {
+          m.coachStage++;
+          m.coachStreak = 0;
+          advanced = true;
+        }
+      } else {
+        m.coachStreak = 0;
+      }
+    }
+    if (passed) _touchStreak();
+    _changed();
+    return advanced;
+  }
+
   void reviewCard(String id, {required bool knew}) {
     memory.review(id, knew: knew, today: dayIndex());
     if (knew) insightPoints += 1;
@@ -5430,6 +5452,10 @@ class MemoryState {
   int newCardsDay = -1;
   int newCardsToday = 0;
 
+  /// Chunking Coach: current stage (== stages.length once graduated) and streak.
+  int coachStage = 0;
+  int coachStreak = 0;
+
   bool doneToday(MemoryDrill d, int today) => lastDoneDay[d] == today;
 
   int newCardsLeft(int today) => math.max(0, newCardsPerDay - (newCardsDay == today ? newCardsToday : 0));
@@ -5479,6 +5505,8 @@ class MemoryState {
         'cards': <String, List<int>>{for (final e in cards.entries) e.key: <int>[e.value.box, e.value.dueDay]},
         'newDay': newCardsDay,
         'newCount': newCardsToday,
+        'coachStage': coachStage,
+        'coachStreak': coachStreak,
       };
 
   void restore(Map<String, dynamic> data) {
@@ -5505,6 +5533,8 @@ class MemoryState {
     }
     newCardsDay = _readInt(data['newDay'], -1);
     newCardsToday = _readInt(data['newCount'], 0);
+    coachStage = _readInt(data['coachStage'], 0).clamp(0, ChunkCoach.stages.length);
+    coachStreak = _readInt(data['coachStreak'], 0).clamp(0, ChunkCoach.passesToAdvance);
   }
 }
 
@@ -5994,6 +6024,8 @@ class _MemoryGymScreenState extends State<MemoryGymScreen> {
               ],
             ),
             const SizedBox(height: 18),
+            _CoachCard(game: game),
+            const SizedBox(height: 14),
             _TodayCard(
               rows: <_TodayRow>[
                 _TodayRow(
@@ -6886,7 +6918,8 @@ class _DigitSpanScreenState extends State<DigitSpanScreen> with DrillSession<Dig
         DrillPhase.intro => DrillIntro(
             drill: drill,
             level: level,
-            tip: 'Chunk it: split the number into groups of 2–3 and give each group a meaning or a rhythm.',
+            tip: 'Chunk it: split the number into groups of 2–3 and give each group a meaning or a rhythm. '
+                'New to this? The Chunking Coach on the Memory tab teaches it step by step.',
             onStart: _startTrial,
             onLearn: openLesson,
           ),
@@ -9195,6 +9228,1016 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
                 style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800, letterSpacing: 0.8),
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  MEMORY COACH: guided chunking with support that fades stage by stage
+// ════════════════════════════════════════════════════════════════════════════
+
+class CoachStage {
+  const CoachStage({
+    required this.title,
+    required this.goal,
+    required this.length,
+    required this.studySeconds,
+    required this.meaningfulBias,
+    this.preChunked = false,
+    this.showSpoken = false,
+    this.showHints = false,
+    this.userSplit = false,
+    this.pickMeaning = false,
+  });
+
+  final String title;
+  final String goal;
+  final int length;
+  final int studySeconds;
+
+  /// Chance that each hidden chunk is a "meaningful" number (a year, a time…).
+  final double meaningfulBias;
+  final bool preChunked;
+  final bool showSpoken;
+  final bool showHints;
+  final bool userSplit;
+  final bool pickMeaning;
+}
+
+class ChunkCoach {
+  ChunkCoach._();
+
+  static const int passesToAdvance = 3;
+
+  static const List<CoachStage> stages = <CoachStage>[
+    CoachStage(
+      title: 'See the chunks',
+      goal: 'The number comes already split. Read each chunk as ONE word, like "forty-one", not "four, one".',
+      length: 6,
+      studySeconds: 7,
+      meaningfulBias: 0.3,
+      preChunked: true,
+      showSpoken: true,
+    ),
+    CoachStage(
+      title: 'Give chunks meaning',
+      goal: 'Longer numbers. Each chunk comes with a meaning. Picture it and say the chunks in a rhythm.',
+      length: 8,
+      studySeconds: 9,
+      meaningfulBias: 0.5,
+      preChunked: true,
+      showSpoken: true,
+      showHints: true,
+    ),
+    CoachStage(
+      title: 'Split it yourself',
+      goal: 'Tap between digits to make your own chunks of 2 to 4 digits. Then memorize your chunks.',
+      length: 8,
+      studySeconds: 8,
+      meaningfulBias: 0.35,
+      userSplit: true,
+      showSpoken: true,
+    ),
+    CoachStage(
+      title: 'Split and give meaning',
+      goal: 'Split the number, then choose a meaning for every chunk before you memorize it.',
+      length: 9,
+      studySeconds: 9,
+      meaningfulBias: 0.5,
+      userSplit: true,
+      pickMeaning: true,
+      showSpoken: true,
+    ),
+    CoachStage(
+      title: 'On your own',
+      goal: 'No help. Split and give meaning in your head while the number is on screen.',
+      length: 10,
+      studySeconds: 8,
+      meaningfulBias: 0.25,
+    ),
+  ];
+
+  static const Map<String, String> famous = <String, String>{
+    '007': 'James Bond',
+    '911': 'the emergency number',
+    '365': 'days in a year',
+    '360': 'a full circle',
+    '404': '"page not found"',
+    '747': 'a jumbo jet',
+    '101': 'a beginner class',
+    '411': 'calling for info',
+    '180': 'a U-turn',
+    '100': 'a perfect score',
+    '24': 'hours in a day',
+    '12': 'a dozen',
+    '60': 'minutes in an hour',
+    '52': 'cards in a deck',
+    '13': 'an unlucky number',
+    '21': 'blackjack',
+    '18': 'becoming an adult',
+    '16': 'getting a driver\'s license',
+    '42': 'the answer to everything',
+    '99': 'just under 100',
+    '50': 'half a hundred',
+    '25': 'a quarter',
+    '23': 'Michael Jordan\'s number',
+    '10': 'a perfect ten',
+    '90': 'a right angle',
+    '88': 'keys on a piano',
+    '64': 'squares on a chessboard',
+    '1776': 'the Declaration of Independence',
+    '1492': 'Columbus sailing',
+    '1000': 'a grand',
+    '1969': 'the moon landing',
+    '2000': 'the new millennium',
+  };
+
+  static const List<String> _ones = <String>[
+    'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
+    'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen',
+  ];
+  static const List<String> _tens = <String>[
+    '', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety',
+  ];
+
+  static String _two(int n) {
+    if (n < 20) return _ones[n];
+    final t = _tens[n ~/ 10];
+    return n % 10 == 0 ? t : '$t-${_ones[n % 10]}';
+  }
+
+  /// How to say a chunk as a single "word": 41 → forty-one, 418 → four eighteen.
+  static String spoken(String chunk) {
+    final d = chunk.split('').map(int.parse).toList();
+    switch (chunk.length) {
+      case 1:
+        return _ones[d[0]];
+      case 2:
+        if (chunk == '00') return 'double zero';
+        return d[0] == 0 ? 'oh-${_ones[d[1]]}' : _two(int.parse(chunk));
+      case 3:
+        if (chunk.substring(1) == '00') return '${_ones[d[0]]} hundred';
+        return '${_ones[d[0]]} ${spoken(chunk.substring(1))}';
+      case 4:
+        if (chunk.substring(2) == '00' && d[0] != 0) return '${spoken(chunk.substring(0, 2))} hundred';
+        return '${spoken(chunk.substring(0, 2))} ${spoken(chunk.substring(2))}';
+      default:
+        return chunk.split('').map((c) => _ones[int.parse(c)]).join(' ');
+    }
+  }
+
+  /// Ways to make a chunk meaningful, best first. Always has at least one.
+  static List<String> hints(String chunk) {
+    final out = <String>[];
+    final n = int.parse(chunk);
+    final known = famous[chunk];
+    if (known != null) out.add(known);
+    if (chunk.length == 4 && n >= 1900 && n <= 2035) out.add('the year $chunk');
+    if (chunk.length == 4) {
+      final h = int.parse(chunk.substring(0, 2));
+      final m = int.parse(chunk.substring(2));
+      if (h < 24 && m < 60) out.add('a time: ${chunk.substring(0, 2)}:${chunk.substring(2)}');
+      if (chunk.substring(0, 2) == chunk.substring(2)) out.add('the same pair twice: ${chunk.substring(0, 2)}');
+    }
+    if (chunk.length == 3) {
+      final h = int.parse(chunk[0]);
+      final m = int.parse(chunk.substring(1));
+      if (h >= 1 && m < 60) out.add('a time: $h:${chunk.substring(1)}');
+    }
+    if (chunk.split('').toSet().length == 1) out.add('all ${_ones[int.parse(chunk[0])]}s');
+    final digits = chunk.split('').map(int.parse).toList();
+    var up = true;
+    var down = true;
+    for (var i = 1; i < digits.length; i++) {
+      if (digits[i] != digits[i - 1] + 1) up = false;
+      if (digits[i] != digits[i - 1] - 1) down = false;
+    }
+    if (up && chunk.length > 1) out.add('counting up from ${digits.first}');
+    if (down && chunk.length > 1) out.add('counting down from ${digits.first}');
+    if (chunk.length == 2 && n >= 10) out.add('someone who is $n years old');
+    out.add('say it as one word: "${spoken(chunk)}"');
+    return out.toSet().toList();
+  }
+
+  /// Random chunk sizes of 2–4 digits that add up to [length] (length >= 2).
+  static List<int> autoSplit(int length, math.Random rng) {
+    final sizes = <int>[];
+    var left = length;
+    while (left > 0) {
+      if (left <= 4) {
+        sizes.add(left);
+        break;
+      }
+      final options = <int>[2, 3, 3, 4].where((p) => left - p != 1).toList();
+      final pick = options[rng.nextInt(options.length)];
+      sizes.add(pick);
+      left -= pick;
+    }
+    return sizes;
+  }
+
+  static String _meaningfulChunk(int size, math.Random rng) {
+    final options = famous.keys.where((k) => k.length == size).toList();
+    if (size == 4) {
+      options.add('${1950 + rng.nextInt(76)}');
+      options.add('${(rng.nextInt(24)).toString().padLeft(2, '0')}${(rng.nextInt(12) * 5).toString().padLeft(2, '0')}');
+    }
+    if (size == 3) options.add('${1 + rng.nextInt(9)}${(rng.nextInt(12) * 5).toString().padLeft(2, '0')}');
+    if (size == 2) options.add('${10 + rng.nextInt(90)}');
+    return options[rng.nextInt(options.length)];
+  }
+
+  static String makeNumber(List<int> sizes, double bias, math.Random rng) {
+    final b = StringBuffer();
+    for (final size in sizes) {
+      if (rng.nextDouble() < bias) {
+        b.write(_meaningfulChunk(size, rng));
+      } else {
+        for (var i = 0; i < size; i++) {
+          b.write(rng.nextInt(10));
+        }
+      }
+    }
+    return b.toString();
+  }
+
+  /// Chunk sizes → the chunk strings.
+  static List<String> cut(String number, List<int> sizes) {
+    final out = <String>[];
+    var i = 0;
+    for (final s in sizes) {
+      out.add(number.substring(i, i + s));
+      i += s;
+    }
+    return out;
+  }
+}
+
+enum _CoachPhase { intro, split, meaning, study, recall, feedback }
+
+class ChunkCoachScreen extends StatefulWidget {
+  const ChunkCoachScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<ChunkCoachScreen> createState() => _ChunkCoachScreenState();
+}
+
+class _ChunkCoachScreenState extends State<ChunkCoachScreen> {
+  final math.Random _rng = math.Random();
+  late int _stageIndex = math.min(widget.game.memory.coachStage, ChunkCoach.stages.length - 1);
+  _CoachPhase _phase = _CoachPhase.intro;
+
+  String _number = '';
+  List<int> _sizes = <int>[];
+
+  /// Gap i sits between digit i and i+1.
+  Set<int> _cuts = <int>{};
+  List<String> _chunks = <String>[];
+  Map<int, String> _meanings = <int, String>{};
+  String _entry = '';
+  bool _lastPassed = false;
+  bool _advanced = false;
+  int _round = 0;
+
+  GameState get game => widget.game;
+  CoachStage get stage => ChunkCoach.stages[_stageIndex];
+  bool get _graduated => game.memory.coachStage >= ChunkCoach.stages.length;
+  Color get _color => MemoryDrill.digits.color;
+
+  void _newRound() {
+    _sizes = ChunkCoach.autoSplit(stage.length, _rng);
+    _number = ChunkCoach.makeNumber(_sizes, stage.meaningfulBias, _rng);
+    _chunks = stage.preChunked ? ChunkCoach.cut(_number, _sizes) : <String>[_number];
+    _cuts = <int>{};
+    _meanings = <int, String>{};
+    _entry = '';
+    _advanced = false;
+    _round++;
+    setState(() => _phase = stage.userSplit ? _CoachPhase.split : _CoachPhase.study);
+  }
+
+  List<String> _chunksFromCuts() {
+    final out = <String>[];
+    var start = 0;
+    for (var i = 0; i < _number.length - 1; i++) {
+      if (_cuts.contains(i)) {
+        out.add(_number.substring(start, i + 1));
+        start = i + 1;
+      }
+    }
+    out.add(_number.substring(start));
+    return out;
+  }
+
+  bool get _splitValid {
+    final chunks = _chunksFromCuts();
+    return chunks.length > 1 && chunks.every((c) => c.length >= 2 && c.length <= 4);
+  }
+
+  void _finishSplit() {
+    _chunks = _chunksFromCuts();
+    setState(() => _phase = stage.pickMeaning ? _CoachPhase.meaning : _CoachPhase.study);
+  }
+
+  void _press(String key) {
+    if (_phase != _CoachPhase.recall) return;
+    HapticFeedback.selectionClick();
+    if (key == 'del') {
+      if (_entry.isNotEmpty) setState(() => _entry = _entry.substring(0, _entry.length - 1));
+      return;
+    }
+    if (key == 'ok') {
+      _submit();
+      return;
+    }
+    if (_entry.length >= _number.length) return;
+    setState(() => _entry += key);
+    if (_entry.length == _number.length) _submit();
+  }
+
+  void _submit() {
+    _lastPassed = _entry == _number;
+    _advanced = game.recordCoach(passed: _lastPassed, stageIndex: _stageIndex);
+    if (_lastPassed) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+    setState(() => _phase = _CoachPhase.feedback);
+  }
+
+  void _afterFeedback() {
+    if (_advanced) {
+      _stageIndex = math.min(game.memory.coachStage, ChunkCoach.stages.length - 1);
+      setState(() => _phase = _CoachPhase.intro);
+      return;
+    }
+    _newRound();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final streak = game.memory.coachStage == _stageIndex ? game.memory.coachStreak : 0;
+    return DrillScaffold(
+      drill: MemoryDrill.digits,
+      progress: (_stageIndex + streak / ChunkCoach.passesToAdvance) / ChunkCoach.stages.length,
+      label: 'CHUNKING COACH · STAGE ${_stageIndex + 1}/${ChunkCoach.stages.length}',
+      child: switch (_phase) {
+        _CoachPhase.intro => _buildIntro(),
+        _CoachPhase.split => _buildSplit(),
+        _CoachPhase.meaning => _buildMeaning(),
+        _CoachPhase.study => _buildStudy(),
+        _CoachPhase.recall => _buildRecall(),
+        _CoachPhase.feedback => _buildFeedback(),
+      },
+    );
+  }
+
+  Widget _buildIntro() {
+    final unlocked = math.min(game.memory.coachStage, ChunkCoach.stages.length - 1);
+    final example = <String>['41', '97', '2001'];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  if (_graduated)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: InfoBanner(
+                        icon: Icons.school,
+                        color: Palette.gold,
+                        text: 'You graduated the Chunking Coach. Use it in Number Span, or replay any stage.',
+                      ),
+                    ),
+                  Text(
+                    'STAGE ${_stageIndex + 1}',
+                    style: TextStyle(color: _color, fontWeight: FontWeight.w900, letterSpacing: 1.4),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    stage.title,
+                    style: const TextStyle(color: Palette.textPrimary, fontSize: 28, fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(stage.goal, style: const TextStyle(color: Palette.textPrimary, fontSize: 16.5, height: 1.45)),
+                  const SizedBox(height: 18),
+                  const Text(
+                    'EXAMPLE',
+                    style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text('41972001 is 8 digits, too many to hold. As chunks it\'s just 3 things:',
+                      style: TextStyle(color: Palette.textMuted, fontSize: 14.5, height: 1.4)),
+                  const SizedBox(height: 10),
+                  _ChunkRow(chunks: example, color: _color, showSpoken: true, hints: const <String>['', '', 'the year 2001']),
+                  const SizedBox(height: 16),
+                  InfoBanner(
+                    icon: Icons.flag,
+                    color: _color,
+                    text: 'Get ${ChunkCoach.passesToAdvance} right in a row to unlock the next stage.',
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'PICK A STAGE',
+                    style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: <Widget>[
+                      for (var i = 0; i < ChunkCoach.stages.length; i++)
+                        ChoiceChip(
+                          label: Text('${i + 1}'),
+                          selected: i == _stageIndex,
+                          onSelected: i <= unlocked || _graduated ? (_) => setState(() => _stageIndex = i) : null,
+                          avatar: i > unlocked && !_graduated ? const Icon(Icons.lock, size: 16) : null,
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          ChunkyButton(label: 'Start stage ${_stageIndex + 1}', color: _color, onPressed: _newRound),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSplit() {
+    final chunks = _chunksFromCuts();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const Text(
+            'Tap between digits to split the number.',
+            style: TextStyle(color: Palette.textPrimary, fontSize: 20, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 4),
+          const Text('Chunks of 2 to 4 digits work best. Look for years, times and familiar numbers.',
+              style: TextStyle(color: Palette.textMuted, fontSize: 14)),
+          const SizedBox(height: 20),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                for (var i = 0; i < _number.length; i++) ...<Widget>[
+                  Container(
+                    width: 30,
+                    height: 48,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: Palette.surface,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Palette.border, width: 1.5),
+                    ),
+                    child: Text(
+                      _number[i],
+                      style: const TextStyle(color: Palette.textPrimary, fontSize: 24, fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                  if (i < _number.length - 1)
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        setState(() => _cuts.contains(i) ? _cuts.remove(i) : _cuts.add(i));
+                      },
+                      child: SizedBox(
+                        width: 20,
+                        height: 64,
+                        child: Center(
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 120),
+                            width: _cuts.contains(i) ? 5 : 2,
+                            height: _cuts.contains(i) ? 52 : 20,
+                            decoration: BoxDecoration(
+                              color: _cuts.contains(i) ? _color : Palette.border,
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          if (_cuts.isNotEmpty) _ChunkRow(chunks: chunks, color: _color, showSpoken: stage.showSpoken),
+          const Spacer(),
+          if (!_splitValid && _cuts.isNotEmpty)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text('Every chunk needs 2 to 4 digits.',
+                  textAlign: TextAlign.center, style: TextStyle(color: Palette.orange, fontWeight: FontWeight.w700)),
+            ),
+          ChunkyButton(label: 'Done splitting', color: _color, onPressed: _splitValid ? _finishSplit : null),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMeaning() {
+    final allPicked = _meanings.length == _chunks.length;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const Text(
+            'Give every chunk a meaning.',
+            style: TextStyle(color: Palette.textPrimary, fontSize: 20, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 4),
+          const Text('Pick the one that clicks for you. Your own idea is even better.',
+              style: TextStyle(color: Palette.textMuted, fontSize: 14)),
+          const SizedBox(height: 14),
+          Expanded(
+            child: ListView(
+              children: <Widget>[
+                for (var i = 0; i < _chunks.length; i++)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Palette.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: _meanings.containsKey(i) ? _color : Palette.border, width: 1.5),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          _chunks[i],
+                          style: TextStyle(color: _color, fontSize: 26, fontWeight: FontWeight.w900, letterSpacing: 3),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: <Widget>[
+                            for (final h in <String>[...ChunkCoach.hints(_chunks[i]).take(3), 'my own idea'])
+                              ChoiceChip(
+                                label: Text(h),
+                                selected: _meanings[i] == h,
+                                onSelected: (_) => setState(() => _meanings[i] = h),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          ChunkyButton(
+            label: allPicked ? 'Memorize it' : 'Pick ${_chunks.length - _meanings.length} more',
+            color: _color,
+            onPressed: allPicked ? () => setState(() => _phase = _CoachPhase.study) : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStudy() {
+    final showChunks = stage.preChunked || stage.userSplit;
+    final hints = <String>[
+      for (var i = 0; i < _chunks.length; i++)
+        if (stage.pickMeaning)
+          (_meanings[i] == 'my own idea' ? 'your idea' : (_meanings[i] ?? ''))
+        else if (stage.showHints)
+          ChunkCoach.hints(_chunks[i]).first
+        else
+          '',
+    ];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          StudyTimer(
+            key: ValueKey<int>(_round),
+            duration: Duration(seconds: stage.studySeconds),
+            color: _color,
+            onDone: () => setState(() => _phase = _CoachPhase.recall),
+          ),
+          const Spacer(),
+          const Text(
+            'MEMORIZE',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800, letterSpacing: 2),
+          ),
+          const SizedBox(height: 14),
+          if (showChunks)
+            _ChunkRow(chunks: _chunks, color: _color, showSpoken: stage.showSpoken, hints: hints)
+          else
+            FittedBox(
+              child: Text(
+                _number,
+                style: const TextStyle(color: Palette.textPrimary, fontSize: 52, fontWeight: FontWeight.w900, letterSpacing: 6),
+              ),
+            ),
+          const Spacer(),
+          if (showChunks)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 10),
+              child: Text(
+                'Say the chunks in your head, twice, in a rhythm.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Palette.textMuted, fontSize: 14),
+              ),
+            ),
+          ChunkyButton(label: "I'm ready", color: _color, onPressed: () => setState(() => _phase = _CoachPhase.recall)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecall() {
+    const keys = <String>['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        children: <Widget>[
+          const Text('TYPE THE NUMBER', style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800, letterSpacing: 2)),
+          const SizedBox(height: 6),
+          const Text('Replay your chunks in your head, one at a time.',
+              style: TextStyle(color: Palette.textMuted, fontSize: 13)),
+          const SizedBox(height: 14),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 6,
+            runSpacing: 6,
+            children: <Widget>[
+              for (var i = 0; i < _number.length; i++)
+                Container(
+                  width: 28,
+                  height: 42,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: Palette.surface,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: i == _entry.length ? _color : Palette.border, width: 2),
+                  ),
+                  child: Text(
+                    i < _entry.length ? _entry[i] : '',
+                    style: const TextStyle(color: Palette.textPrimary, fontSize: 20, fontWeight: FontWeight.w900),
+                  ),
+                ),
+            ],
+          ),
+          const Spacer(),
+          for (var row = 0; row < 4; row++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: <Widget>[
+                  for (var col = 0; col < 3; col++) ...<Widget>[
+                    if (col > 0) const SizedBox(width: 10),
+                    Expanded(child: _KeypadKey(value: keys[row * 3 + col], color: _color, onTap: _press)),
+                  ],
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFeedback() {
+    final chunks = _chunks.length > 1 ? _chunks : ChunkCoach.cut(_number, _sizes);
+    final streak = game.memory.coachStage == _stageIndex ? game.memory.coachStreak : 0;
+    final String note;
+    if (_advanced) {
+      note = _graduated
+          ? 'You graduated! Chunking is now your tool. Use it in Number Span and on real numbers.'
+          : 'Stage ${_stageIndex + 2} unlocked: less help from here.';
+    } else if (_lastPassed) {
+      note = game.memory.coachStage == _stageIndex
+          ? '$streak of ${ChunkCoach.passesToAdvance} in a row for the next stage.'
+          : 'Nice. This is a replay, so it doesn\'t change your stage.';
+    } else {
+      note = 'Streak reset. Tip: if a chunk felt slippery, give it a stronger meaning next time.';
+    }
+    return DrillFeedback(
+      passed: _lastPassed,
+      headline: _advanced ? 'Stage cleared!' : (_lastPassed ? 'Got it' : 'Not quite'),
+      levelText: note,
+      nextLabel: _advanced ? 'Continue' : 'Next number',
+      onNext: _afterFeedback,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const Text('THE NUMBER, CHUNKED', style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          _ChunkRow(chunks: chunks, color: Palette.green, showSpoken: true),
+          const SizedBox(height: 14),
+          _NumberRow(
+            label: 'You typed',
+            value: _entry.isEmpty ? '–' : _entry,
+            color: _lastPassed ? Palette.green : Palette.red,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChunkRow extends StatelessWidget {
+  const _ChunkRow({required this.chunks, required this.color, this.showSpoken = false, this.hints});
+  final List<String> chunks;
+  final Color color;
+  final bool showSpoken;
+  final List<String>? hints;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: 10,
+      runSpacing: 10,
+      children: <Widget>[
+        for (var i = 0; i < chunks.length; i++)
+          Container(
+            constraints: const BoxConstraints(minWidth: 76, maxWidth: 160),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: color.withAlpha(30),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: color.withAlpha(160), width: 1.5),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text(
+                  chunks[i],
+                  style: const TextStyle(color: Palette.textPrimary, fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: 3),
+                ),
+                if (showSpoken)
+                  Text(
+                    ChunkCoach.spoken(chunks[i]),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: color, fontSize: 12.5, fontWeight: FontWeight.w800),
+                  ),
+                if (hints != null && i < hints!.length && hints![i].isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      hints![i],
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Palette.textMuted, fontSize: 12, height: 1.25),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// ── How Memory Works guide ────────────────────────────────────────────────
+
+class MemoryGuideScreen extends StatefulWidget {
+  const MemoryGuideScreen({super.key, required this.game});
+  final GameState game;
+
+  static const List<LessonPage> pages = <LessonPage>[
+    LessonPage('Memory is a skill',
+        'People with great memories mostly aren\'t born with better brains. Studies of memory champions found ordinary brains using better techniques. You can learn the same ones.'),
+    LessonPage('1. Pay attention on purpose',
+        'Most "forgetting" is really never storing it. When something matters (a name, a number, where you parked), stop for three seconds and focus only on it.',
+        'Meeting someone? Look at their face and say their name back: "Nice to meet you, Sam."'),
+    LessonPage('2. Make it mean something',
+        'Link new things to things you already know. Meaning is glue: a random number becomes a year, a name becomes a friend with the same name.',
+        '1984 → the book. 0745 → quarter to eight. Ruby → a red gem.'),
+    LessonPage('3. Make it a picture',
+        'Your brain remembers pictures and places far better than words. Turn things into vivid, weird, moving images, and put them somewhere.',
+        'Buy eggs and soap? Picture eggs exploding into soap bubbles on your front door.'),
+    LessonPage('4. Test yourself',
+        'Pulling a memory back out (without looking) is the strongest study habit there is. Rereading feels productive but works much less.',
+        'Close the page and say what you remember. Then check.'),
+    LessonPage('5. Space it out',
+        'Review after a day, then a few days, then a week. Each review comes right as you start to forget, and that\'s what makes it stick. Short and often beats long and rare.'),
+    LessonPage('6. Sleep on it',
+        'Memories get locked in while you sleep. A good night after learning helps more than an extra late hour of studying.'),
+    LessonPage('Your plan',
+        'Do the Chunking Coach until you graduate, keep up the 5-minute daily workout, and use these tricks in real life: phone numbers, names, shopping lists, where you parked.'),
+  ];
+
+  @override
+  State<MemoryGuideScreen> createState() => _MemoryGuideScreenState();
+}
+
+class _MemoryGuideScreenState extends State<MemoryGuideScreen> {
+  final PageController _pages = PageController();
+  int _page = 0;
+
+  @override
+  void dispose() {
+    _pages.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const pages = MemoryGuideScreen.pages;
+    final last = _page >= pages.length - 1;
+    const color = Palette.teal;
+    return DrillScaffold(
+      drill: MemoryDrill.review,
+      progress: (_page + 1) / pages.length,
+      label: 'HOW MEMORY WORKS',
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: Column(
+          children: <Widget>[
+            Expanded(
+              child: PageView(
+                controller: _pages,
+                onPageChanged: (i) => setState(() => _page = i),
+                children: <Widget>[
+                  for (final page in pages)
+                    SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: <Widget>[
+                          const SizedBox(height: 12),
+                          const Icon(Icons.psychology, color: color, size: 48),
+                          const SizedBox(height: 14),
+                          Text(
+                            page.title,
+                            style: const TextStyle(color: Palette.textPrimary, fontSize: 25, fontWeight: FontWeight.w900, height: 1.2),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(page.body, style: const TextStyle(color: Palette.textPrimary, fontSize: 16.5, height: 1.5)),
+                          if (page.example != null) ...<Widget>[
+                            const SizedBox(height: 16),
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: color.withAlpha(30),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: color.withAlpha(130)),
+                              ),
+                              child: Text(
+                                page.example!,
+                                style: const TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.w800, height: 1.4),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                for (var i = 0; i < pages.length; i++)
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+                    width: i == _page ? 22 : 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: i == _page ? color : Palette.border,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+              ],
+            ),
+            ChunkyButton(
+              label: last ? 'Start the Chunking Coach' : 'Next',
+              color: color,
+              onPressed: () {
+                if (last) {
+                  Navigator.of(context).pushReplacement(
+                    MaterialPageRoute<void>(builder: (_) => ChunkCoachScreen(game: widget.game)),
+                  );
+                } else {
+                  _pages.nextPage(duration: const Duration(milliseconds: 280), curve: Curves.easeOutCubic);
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CoachCard extends StatelessWidget {
+  const _CoachCard({required this.game});
+  final GameState game;
+
+  @override
+  Widget build(BuildContext context) {
+    final stage = game.memory.coachStage;
+    final total = ChunkCoach.stages.length;
+    final graduated = stage >= total;
+    final color = MemoryDrill.digits.color;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Palette.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Palette.gold.withAlpha(150), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const Row(
+            children: <Widget>[
+              Icon(Icons.school, color: Palette.gold, size: 22),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Learn to remember',
+                  style: TextStyle(color: Palette.textPrimary, fontSize: 17, fontWeight: FontWeight.w900),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Step-by-step coaching. Start here if the techniques feel hard.',
+            style: TextStyle(color: Palette.textMuted, fontSize: 13),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: <Widget>[
+              for (var i = 0; i < total; i++)
+                Expanded(
+                  child: Container(
+                    height: 8,
+                    margin: EdgeInsets.only(right: i == total - 1 ? 0 : 4),
+                    decoration: BoxDecoration(
+                      color: i < stage ? color : Palette.surfaceHigh,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            graduated
+                ? 'Chunking Coach: graduated 🎓'
+                : 'Chunking Coach: stage ${stage + 1} of $total · ${ChunkCoach.stages[stage].title}',
+            style: TextStyle(color: color, fontSize: 12.5, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(builder: (_) => MemoryGuideScreen(game: game)),
+                  ),
+                  icon: const Icon(Icons.menu_book, size: 18),
+                  label: const Text('How memory works'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Palette.textPrimary,
+                    side: const BorderSide(color: Palette.border, width: 1.5),
+                    minimumSize: const Size.fromHeight(44),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(builder: (_) => ChunkCoachScreen(game: game)),
+                  ),
+                  icon: const Icon(Icons.play_arrow, size: 20),
+                  label: Text(graduated ? 'Replay' : 'Coach me'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: color,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size.fromHeight(44),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

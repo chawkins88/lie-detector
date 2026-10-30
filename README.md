@@ -71,6 +71,9 @@ shows a tell, and only the baseline tells you which one, if any, is a real chang
 
 A second tab that trains memory with techniques that hold up in research, not generic brain games:
 
+- **Chunking Coach**: a five-stage guided course (pre-split numbers with how to say each chunk →
+  meaning hints → split it yourself → split and pick meanings → no help), three in a row to advance.
+- **How Memory Works**: a short guide to attention, meaning, pictures, self-testing, spacing and sleep.
 - **Number Span**: chunking digits into meaningful groups.
 - **Story Chain**: the link method, chaining words into one vivid story.
 - **Memory Palace**: the method of loci along a 12-stop route through your own home.
