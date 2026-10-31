@@ -7052,7 +7052,7 @@ class _DigitSpanScreenState extends State<DigitSpanScreen> with DrillSession<Dig
   }
 
   Widget _buildRecall() {
-    const keys = <String>['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'];
+    const keys = <String>['7', '8', '9', '4', '5', '6', '1', '2', '3', 'del', '0', 'ok'];
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       child: Column(
@@ -10033,7 +10033,7 @@ class _ChunkCoachScreenState extends State<ChunkCoachScreen> {
   }
 
   Widget _buildRecall() {
-    const keys = <String>['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'];
+    const keys = <String>['7', '8', '9', '4', '5', '6', '1', '2', '3', 'del', '0', 'ok'];
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       child: Column(
