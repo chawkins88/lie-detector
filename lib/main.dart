@@ -5467,6 +5467,7 @@ enum MemoryDrill {
   faces('Names & Faces', 'Name hooks', Icons.badge, Palette.pink, 4, 3, 10, 'people'),
   kim("Kim's Game", 'Visual attention', Icons.grid_view, Palette.teal, 2, 1, 7, ''),
   snapshot('Person Snapshot', 'Observation recall', Icons.person_search, Palette.orange, 2, 1, 7, ''),
+  cards('Card Counting', 'Hi-Lo running count', Icons.casino, Palette.red, 1, 1, 10, ''),
   review('Spaced Review', 'Retrieval & spacing', Icons.style, Palette.green, 0, 0, 0, '');
 
   const MemoryDrill(
@@ -5706,6 +5707,30 @@ class MemoryContent {
       LessonPage('How the drill works',
           'Read the snapshot before it disappears, then answer from memory. Higher levels give you less time.'),
     ],
+    MemoryDrill.cards: <LessonPage>[
+      LessonPage('Blackjack in 30 seconds',
+          'Get closer to 21 than the dealer without going over. Number cards count as their number, J, Q and K count as 10, '
+          'and an ace is 1 or 11. "Hit" takes another card, "stand" stops. The dealer must keep hitting until 17 or more.'),
+      LessonPage('Starter strategy',
+          'A simplified version of the math-correct moves: always stand on 17 or more, always hit on 11 or less. '
+          'With 12 to 16, stand if the dealer\'s face-up card is 2–6, and hit if it\'s 7 or higher.'),
+      LessonPage('Why counting works',
+          'The cards still in the deck change your odds. When lots of 10s and aces are left, blackjacks and dealer busts '
+          'happen more, which helps the player. Counting tells you when the deck is "hot".'),
+      LessonPage('Hi-Lo values',
+          'Every card gets one of three values. You never memorize the cards themselves, just one running number.',
+          '2 3 4 5 6  →  +1\n7 8 9  →  0\n10 J Q K A  →  −1'),
+      LessonPage('The running count',
+          'Start at 0 after a shuffle and add each card\'s value as it\'s dealt. Positive means the deck is good for you: bet more. '
+          'Negative means bet the minimum. Cancel pairs to go faster: a 5 and a king together are 0.',
+          '5, K, 2, 9, 4  →  +1, 0, +1, +1, +2'),
+      LessonPage('Playing with friends',
+          'Counting only helps if the deck is NOT reshuffled every hand. Shuffle two decks together, deal from the pile, and '
+          'reshuffle only when about three quarters are used. Play for chips or snacks, not real money.'),
+      LessonPage('How the drill works',
+          'Cards flash by one at a time. Keep the running count in your head, then enter it (± for negative). The first '
+          'two levels show each card\'s value; after that it\'s all you, with more cards and faster deals.'),
+    ],
     MemoryDrill.review: <LessonPage>[
       LessonPage('The forgetting curve',
           'We forget most new information within days unless we review it, but each well-timed review makes the memory last much longer.'),
@@ -5929,6 +5954,8 @@ class MemoryContent {
         'Focus on the face, say the name back, and hook it to an image (Dana → Dalmatian).'),
     StudyCard('m_testing', 'What is the testing effect?',
         'Trying to recall information strengthens memory more than rereading it.'),
+    StudyCard('m_hilo', 'What are the Hi-Lo card counting values?',
+        '2–6 = +1, 7–9 = 0, and 10s, face cards and aces = −1. Keep one running total, starting at 0.'),
     StudyCard('m_spacing', 'Why space out reviews?',
         'Reviewing just as you start to forget makes memories last much longer than cramming.'),
     // Cold Reading concepts
@@ -5999,6 +6026,7 @@ void openMemoryDrill(BuildContext context, GameState game, MemoryDrill drill, {b
     MemoryDrill.faces => NamesFacesScreen(game: game),
     MemoryDrill.kim => KimsGameScreen(game: game),
     MemoryDrill.snapshot => SnapshotScreen(game: game),
+    MemoryDrill.cards => CardCountScreen(game: game),
     MemoryDrill.review => SpacedReviewScreen(game: game),
   };
   final route = MaterialPageRoute<void>(builder: (_) => screen);
@@ -6028,6 +6056,7 @@ class _MemoryGymScreenState extends State<MemoryGymScreen> {
     MemoryDrill.faces,
     MemoryDrill.kim,
     MemoryDrill.snapshot,
+    MemoryDrill.cards,
   ];
 
   GameState get game => widget.game;
@@ -11791,6 +11820,320 @@ class _ProgressChartState extends State<ProgressChart> {
           ],
         ),
       ],
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  CARD COUNTING TRAINER (Hi-Lo)
+// ════════════════════════════════════════════════════════════════════════════
+
+class PlayingCard {
+  const PlayingCard(this.rank, this.suit);
+  final String rank;
+  final String suit;
+
+  bool get red => suit == '♥' || suit == '♦';
+  int get hiLo => hiLoValue(rank);
+}
+
+/// Hi-Lo: 2–6 = +1, 7–9 = 0, 10s, faces and aces = −1.
+int hiLoValue(String rank) => switch (rank) {
+      '2' || '3' || '4' || '5' || '6' => 1,
+      '7' || '8' || '9' => 0,
+      _ => -1,
+    };
+
+List<PlayingCard> shuffledDeck(math.Random rng) {
+  const ranks = <String>['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+  const suits = <String>['♠', '♥', '♦', '♣'];
+  return <PlayingCard>[
+    for (final s in suits)
+      for (final r in ranks) PlayingCard(r, s),
+  ]..shuffle(rng);
+}
+
+class CardCountScreen extends StatefulWidget {
+  const CardCountScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<CardCountScreen> createState() => _CardCountScreenState();
+}
+
+class _CardCountScreenState extends State<CardCountScreen> with DrillSession<CardCountScreen> {
+  List<PlayingCard> _cards = <PlayingCard>[];
+  int _shown = 0;
+  Timer? _dealer;
+  String _digits = '';
+  bool _negative = false;
+  int _answer = 0;
+
+  @override
+  GameState get game => widget.game;
+  @override
+  MemoryDrill get drill => MemoryDrill.cards;
+  @override
+  int get totalTrials => 3;
+
+  int get _cardCount => math.min(52, 8 + 4 * level);
+  Duration get _speed => Duration(milliseconds: math.max(450, 1600 - 110 * (level - 1)));
+  bool get _showValues => level <= 2;
+  int get _trueCount => _cards.fold<int>(0, (sum, c) => sum + c.hiLo);
+
+  @override
+  void initState() {
+    super.initState();
+    initSession();
+  }
+
+  @override
+  void dispose() {
+    _dealer?.cancel();
+    super.dispose();
+  }
+
+  void _startTrial() {
+    _dealer?.cancel();
+    setState(() {
+      _cards = shuffledDeck(rng).take(_cardCount).toList();
+      _shown = 0;
+      _digits = '';
+      _negative = false;
+      phase = DrillPhase.study;
+    });
+    _dealer = Timer.periodic(_speed, (_) {
+      if (!mounted) return;
+      if (_shown + 1 >= _cards.length) {
+        _dealer?.cancel();
+        setState(() => phase = DrillPhase.recall);
+      } else {
+        setState(() => _shown++);
+      }
+    });
+  }
+
+  void _press(String key) {
+    if (phase != DrillPhase.recall) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      if (key == 'del') {
+        if (_digits.isNotEmpty) {
+          _digits = _digits.substring(0, _digits.length - 1);
+        } else {
+          _negative = false;
+        }
+      } else if (key == '±') {
+        _negative = !_negative;
+      } else if (key != 'ok' && _digits.length < 2) {
+        _digits += key;
+      }
+    });
+  }
+
+  void _submit() {
+    if (_digits.isEmpty) return;
+    final value = int.parse(_digits) * (_negative ? -1 : 1);
+    _answer = value;
+    final diff = (value - _trueCount).abs();
+    final passed = diff == 0;
+    finishTrial(passed: passed, levelDelta: passed ? 1 : (diff > 2 ? -1 : 0), ip: passed ? 3 + level : 0);
+  }
+
+  String get _entryText => _digits.isEmpty ? (_negative ? '−' : '?') : '${_negative ? '−' : (_digits == '0' ? '' : '+')}$_digits';
+
+  @override
+  Widget build(BuildContext context) {
+    return DrillScaffold(
+      drill: drill,
+      progress: progress,
+      label: '${drill.title.toUpperCase()} · ROUND ${math.min(trial + 1, totalTrials)}/$totalTrials',
+      child: switch (phase) {
+        DrillPhase.intro => DrillIntro(
+            drill: drill,
+            level: level,
+            tip: 'Keep ONE number in your head: +1 for 2–6, 0 for 7–9, −1 for 10s, faces and aces. '
+                'Start at 0. Level $level: $_cardCount cards, one every ${(_speed.inMilliseconds / 1000).toStringAsFixed(1)}s.',
+            onStart: _startTrial,
+            onLearn: openLesson,
+          ),
+        DrillPhase.study || DrillPhase.blank => _buildDeal(),
+        DrillPhase.recall => _buildRecall(),
+        DrillPhase.feedback => DrillFeedback(
+            passed: lastPassed,
+            headline: lastPassed ? 'Count is right: ${_signed(_trueCount)}' : 'The count was ${_signed(_trueCount)}',
+            levelText: '${lastPassed ? '' : 'You said ${_signed(_answer)}. '}$levelChangeText',
+            nextLabel: trial + 1 >= totalTrials ? 'Finish' : 'Deal again',
+            onNext: () => nextTrial(_startTrial),
+            child: _buildBreakdown(),
+          ),
+        DrillPhase.summary => buildSummary(_startTrial),
+      },
+    );
+  }
+
+  static String _signed(int v) => v > 0 ? '+$v' : (v < 0 ? '−${v.abs()}' : '0');
+
+  Widget _buildDeal() {
+    final card = _cards[_shown];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        children: <Widget>[
+          Text(
+            'CARD ${_shown + 1} OF ${_cards.length}',
+            style: TextStyle(color: drill.color, fontWeight: FontWeight.w900, letterSpacing: 1.4),
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: (_shown + 1) / _cards.length,
+              minHeight: 6,
+              backgroundColor: Palette.surfaceHigh,
+              valueColor: AlwaysStoppedAnimation<Color>(drill.color),
+            ),
+          ),
+          const Spacer(),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 140),
+            transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: child),
+            child: _CardFace(key: ValueKey<int>(_shown), card: card),
+          ),
+          const SizedBox(height: 16),
+          if (_showValues)
+            Text(
+              card.hiLo > 0 ? '+1' : (card.hiLo < 0 ? '−1' : '0'),
+              style: TextStyle(
+                color: card.hiLo > 0 ? Palette.green : (card.hiLo < 0 ? Palette.red : Palette.textMuted),
+                fontSize: 28,
+                fontWeight: FontWeight.w900,
+              ),
+            )
+          else
+            const Text('Keep counting…', style: TextStyle(color: Palette.textMuted, fontSize: 16)),
+          const Spacer(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecall() {
+    const keys = <String>['7', '8', '9', '4', '5', '6', '1', '2', '3', '±', '0', 'del'];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        children: <Widget>[
+          const Text("WHAT'S THE RUNNING COUNT?",
+              style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800, letterSpacing: 1.6)),
+          const SizedBox(height: 14),
+          Text(_entryText, style: const TextStyle(color: Palette.textPrimary, fontSize: 56, fontWeight: FontWeight.w900)),
+          const Text('Tap ± for a negative count.', style: TextStyle(color: Palette.textMuted, fontSize: 13)),
+          const Spacer(),
+          for (var row = 0; row < 4; row++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: <Widget>[
+                  for (var col = 0; col < 3; col++) ...<Widget>[
+                    if (col > 0) const SizedBox(width: 10),
+                    Expanded(child: _KeypadKey(value: keys[row * 3 + col], color: drill.color, onTap: _press)),
+                  ],
+                ],
+              ),
+            ),
+          ChunkyButton(label: 'Check count', color: drill.color, onPressed: _digits.isEmpty ? null : _submit),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBreakdown() {
+    final totals = <int>[];
+    var running = 0;
+    for (final c in _cards) {
+      running += c.hiLo;
+      totals.add(running);
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        const Text('EVERY CARD, WITH THE RUNNING COUNT',
+            style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: <Widget>[
+            for (var i = 0; i < _cards.length; i++)
+              Container(
+                width: 54,
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                decoration: BoxDecoration(
+                  color: Palette.surface,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Palette.border),
+                ),
+                child: Column(
+                  children: <Widget>[
+                    Text(
+                      '${_cards[i].rank}${_cards[i].suit}',
+                      style: TextStyle(
+                        color: _cards[i].red ? const Color(0xFFFF7A7A) : Palette.textPrimary,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    Text(_signed(totals[i]), style: const TextStyle(color: Palette.textMuted, fontSize: 12)),
+                  ],
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        const InfoBanner(
+          icon: Icons.tips_and_updates,
+          color: Palette.red,
+          text: 'Pro trick: cancel pairs. A 5 and a king together are 0, so you can skip them.',
+        ),
+      ],
+    );
+  }
+}
+
+class _CardFace extends StatelessWidget {
+  const _CardFace({super.key, required this.card});
+  final PlayingCard card;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = card.red ? const Color(0xFFD32F2F) : const Color(0xFF1A1A1A);
+    final corner = TextStyle(color: color, fontSize: 24, fontWeight: FontWeight.w900, height: 1);
+    return Container(
+      width: 160,
+      height: 224,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: const <BoxShadow>[BoxShadow(color: Colors.black54, blurRadius: 12, offset: Offset(0, 6))],
+      ),
+      child: Stack(
+        children: <Widget>[
+          Positioned(
+            top: 12,
+            left: 14,
+            child: Column(children: <Widget>[Text(card.rank, style: corner), Text(card.suit, style: corner)]),
+          ),
+          Center(child: Text(card.suit, style: TextStyle(color: color, fontSize: 80))),
+          Positioned(
+            bottom: 12,
+            right: 14,
+            child: RotatedBox(
+              quarterTurns: 2,
+              child: Column(children: <Widget>[Text(card.rank, style: corner), Text(card.suit, style: corner)]),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cold_reading/main.dart';
@@ -94,5 +95,19 @@ void main() {
     expect(g.hearts, GameState.maxHearts);
     expect(g.insightPoints, 0);
     g.dispose();
+  });
+
+  test('Hi-Lo values and a full deck count to zero', () {
+    expect(hiLoValue('2'), 1);
+    expect(hiLoValue('6'), 1);
+    expect(hiLoValue('7'), 0);
+    expect(hiLoValue('9'), 0);
+    expect(hiLoValue('10'), -1);
+    expect(hiLoValue('K'), -1);
+    expect(hiLoValue('A'), -1);
+    final deck = shuffledDeck(math.Random(5));
+    expect(deck.length, 52);
+    expect(deck.map((c) => '${c.rank}${c.suit}').toSet().length, 52);
+    expect(deck.fold<int>(0, (s, c) => s + c.hiLo), 0);
   });
 }
