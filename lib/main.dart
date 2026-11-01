@@ -2474,6 +2474,24 @@ class GameState extends ChangeNotifier {
     _changed();
   }
 
+  /// Blackjack table: [hands played, net IP, biggest win].
+  final List<int> blackjackStats = <int>[0, 0, 0];
+
+  /// Takes a bet out of the bankroll (call only when affordable).
+  void placeBet(int amount) {
+    insightPoints = math.max(0, insightPoints - amount);
+    _changed();
+  }
+
+  /// Pays back [returned] IP for a hand that cost [staked].
+  void settleBlackjack({required int staked, required int returned}) {
+    insightPoints += returned;
+    blackjackStats[0]++;
+    blackjackStats[1] += returned - staked;
+    blackjackStats[2] = math.max(blackjackStats[2], returned - staked);
+    _changed();
+  }
+
   /// Practice hub: best scores, questions to review, daily case.
   final Map<String, int> practiceBest = <String, int>{};
   final Set<String> mistakes = <String>{};
@@ -2763,6 +2781,7 @@ class GameState extends ChangeNotifier {
         'dayLog': <String, List<int>>{for (final e in dayLog.entries) '${e.key}': e.value},
         'caseStars': caseStars,
         'realLife': realLifeStats,
+        'blackjack': blackjackStats,
       };
 
   @visibleForTesting
@@ -2808,6 +2827,12 @@ class GameState extends ChangeNotifier {
         });
       }
       _readCounts(data['caseStars'], caseStars, <String, String>{for (final c in ConsultantCases.all) c.id: c.id});
+      final bj = data['blackjack'];
+      if (bj is List && bj.length == 3 && bj.every((v) => v is int)) {
+        for (var i = 0; i < 3; i++) {
+          blackjackStats[i] = bj[i] as int;
+        }
+      }
       final real = data['realLife'];
       if (real is Map) {
         real.forEach((Object? k, Object? v) {
@@ -6150,6 +6175,19 @@ class _MemoryGymScreenState extends State<MemoryGymScreen> {
                 onLearn: () => openMemoryLesson(context, game, drill),
                 onPractice: () => openMemoryDrill(context, game, drill),
               ),
+            const SizedBox(height: 4),
+            _BigModeCard(
+              emoji: '🃏',
+              title: 'Blackjack Table',
+              subtitle: 'Play real blackjack with your IP. Use your counting. Play money only.',
+              status: game.blackjackStats[0] == 0
+                  ? 'No hands yet · ${game.insightPoints} IP to play with'
+                  : '${game.blackjackStats[0]} hands · net ${game.blackjackStats[1] >= 0 ? '+' : ''}${game.blackjackStats[1]} IP',
+              color: Palette.red,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => BlackjackScreen(game: game)),
+              ),
+            ),
             const SizedBox(height: 12),
             const _ScienceCard(),
           ],
@@ -12132,6 +12170,527 @@ class _CardFace extends StatelessWidget {
               child: Column(children: <Widget>[Text(card.rank, style: corner), Text(card.suit, style: corner)]),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  BLACKJACK TABLE: play with IP (play money only)
+// ════════════════════════════════════════════════════════════════════════════
+
+class Blackjack {
+  Blackjack._();
+
+  static const int minBet = 5;
+  static const int maxBet = 500;
+  static const int decks = 4;
+
+  static int cardValue(String rank) => switch (rank) {
+        'A' => 1,
+        'J' || 'Q' || 'K' || '10' => 10,
+        _ => int.parse(rank),
+      };
+
+  /// Best total and whether an ace is counted as 11.
+  static ({int total, bool soft}) handValue(List<PlayingCard> hand) {
+    var total = 0;
+    var aces = 0;
+    for (final c in hand) {
+      total += cardValue(c.rank);
+      if (c.rank == 'A') aces++;
+    }
+    if (aces > 0 && total + 10 <= 21) return (total: total + 10, soft: true);
+    return (total: total, soft: false);
+  }
+
+  static bool isBlackjack(List<PlayingCard> hand) => hand.length == 2 && handValue(hand).total == 21;
+
+  /// Basic strategy (4+ decks, dealer stands on soft 17, no splits).
+  /// Returns 'Hit', 'Stand' or 'Double'.
+  static String advice(List<PlayingCard> hand, PlayingCard dealerUp, {required bool canDouble}) {
+    final v = handValue(hand);
+    final d = dealerUp.rank == 'A' ? 11 : cardValue(dealerUp.rank);
+    String dbl(String otherwise) => canDouble ? 'Double' : otherwise;
+    if (v.soft) {
+      final t = v.total;
+      if (t >= 19) return 'Stand';
+      if (t == 18) {
+        if (d >= 3 && d <= 6) return dbl('Stand');
+        if (d == 2 || d == 7 || d == 8) return 'Stand';
+        return 'Hit';
+      }
+      if (t == 17) return (d >= 3 && d <= 6) ? dbl('Hit') : 'Hit';
+      if (t == 15 || t == 16) return (d >= 4 && d <= 6) ? dbl('Hit') : 'Hit';
+      return (d == 5 || d == 6) ? dbl('Hit') : 'Hit'; // soft 13–14
+    }
+    final t = v.total;
+    if (t >= 17) return 'Stand';
+    if (t >= 13) return d <= 6 ? 'Stand' : 'Hit';
+    if (t == 12) return (d >= 4 && d <= 6) ? 'Stand' : 'Hit';
+    if (t == 11) return d <= 10 ? dbl('Hit') : 'Hit';
+    if (t == 10) return d <= 9 ? dbl('Hit') : 'Hit';
+    if (t == 9) return (d >= 3 && d <= 6) ? dbl('Hit') : 'Hit';
+    return 'Hit';
+  }
+}
+
+enum _TablePhase { betting, player, dealer, settled }
+
+class BlackjackScreen extends StatefulWidget {
+  const BlackjackScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<BlackjackScreen> createState() => _BlackjackScreenState();
+}
+
+class _BlackjackScreenState extends State<BlackjackScreen> {
+  final math.Random _rng = math.Random();
+  List<PlayingCard> _shoe = <PlayingCard>[];
+  int _shoeSize = 0;
+  int _runningCount = 0;
+  final List<PlayingCard> _player = <PlayingCard>[];
+  final List<PlayingCard> _dealer = <PlayingCard>[];
+  bool _holeHidden = true;
+  _TablePhase _phase = _TablePhase.betting;
+  int _bet = 25;
+  int _staked = 0;
+  String _message = '';
+  bool _coach = false;
+  bool _countHelper = false;
+  bool _justShuffled = false;
+  int _strategyMoves = 0;
+  int _strategyCorrect = 0;
+
+  GameState get game => widget.game;
+
+  @override
+  void initState() {
+    super.initState();
+    _shuffle();
+    _bet = _bet.clamp(Blackjack.minBet, math.max(Blackjack.minBet, game.insightPoints));
+  }
+
+  void _shuffle() {
+    _shoe = <PlayingCard>[for (var i = 0; i < Blackjack.decks; i++) ...shuffledDeck(_rng)]..shuffle(_rng);
+    _shoeSize = _shoe.length;
+    _runningCount = 0;
+    _justShuffled = true;
+  }
+
+  PlayingCard _draw({bool visible = true}) {
+    final c = _shoe.removeLast();
+    if (visible) _runningCount += c.hiLo;
+    return c;
+  }
+
+  double get _decksLeft => math.max(0.5, _shoe.length / 52);
+  double get _trueCount => _runningCount / _decksLeft;
+
+  void _deal() {
+    if (_bet < Blackjack.minBet || _bet > game.insightPoints) return;
+    if (_shoe.length < _shoeSize * 0.25) {
+      _shuffle();
+    } else {
+      _justShuffled = false;
+    }
+    game.placeBet(_bet);
+    _staked = _bet;
+    _player
+      ..clear()
+      ..add(_draw())
+      ..add(_draw());
+    _dealer
+      ..clear()
+      ..add(_draw())
+      ..add(_draw(visible: false));
+    _holeHidden = true;
+    _message = '';
+    HapticFeedback.mediumImpact();
+
+    final playerBj = Blackjack.isBlackjack(_player);
+    final dealerBj = Blackjack.isBlackjack(_dealer);
+    if (playerBj || dealerBj) {
+      _revealHole();
+      if (playerBj && dealerBj) {
+        _settle(_staked, 'Both blackjack. Push.');
+      } else if (playerBj) {
+        _settle(_staked + (_staked * 3) ~/ 2, 'Blackjack! Paid 3 to 2.');
+      } else {
+        _settle(0, 'Dealer has blackjack.');
+      }
+      return;
+    }
+    setState(() => _phase = _TablePhase.player);
+  }
+
+  void _revealHole() {
+    if (_holeHidden) {
+      _holeHidden = false;
+      _runningCount += _dealer[1].hiLo;
+    }
+  }
+
+  void _trackStrategy(String move) {
+    final best = Blackjack.advice(_player, _dealer.first, canDouble: _canDouble);
+    _strategyMoves++;
+    if (best == move) _strategyCorrect++;
+  }
+
+  bool get _canDouble => _player.length == 2 && game.insightPoints >= _staked;
+
+  void _hit() {
+    _trackStrategy('Hit');
+    HapticFeedback.selectionClick();
+    setState(() => _player.add(_draw()));
+    if (Blackjack.handValue(_player).total > 21) {
+      _revealHole();
+      _settle(0, 'Bust. You went over 21.');
+    }
+  }
+
+  void _stand() {
+    _trackStrategy('Stand');
+    _playDealer();
+  }
+
+  void _double() {
+    if (!_canDouble) return;
+    _trackStrategy('Double');
+    game.placeBet(_staked);
+    _staked *= 2;
+    setState(() => _player.add(_draw()));
+    if (Blackjack.handValue(_player).total > 21) {
+      _revealHole();
+      _settle(0, 'Doubled and busted.');
+      return;
+    }
+    _playDealer();
+  }
+
+  Future<void> _playDealer() async {
+    setState(() {
+      _phase = _TablePhase.dealer;
+      _revealHole();
+    });
+    while (Blackjack.handValue(_dealer).total < 17) {
+      await Future<void>.delayed(const Duration(milliseconds: 650));
+      if (!mounted) return;
+      setState(() => _dealer.add(_draw()));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (!mounted) return;
+    final p = Blackjack.handValue(_player).total;
+    final d = Blackjack.handValue(_dealer).total;
+    if (d > 21) {
+      _settle(_staked * 2, 'Dealer busts with $d. You win!');
+    } else if (p > d) {
+      _settle(_staked * 2, '$p beats $d. You win!');
+    } else if (p == d) {
+      _settle(_staked, 'Push at $p. Bet returned.');
+    } else {
+      _settle(0, 'Dealer wins, $d to $p.');
+    }
+  }
+
+  void _settle(int returned, String message) {
+    game.settleBlackjack(staked: _staked, returned: returned);
+    if (returned > _staked) {
+      HapticFeedback.mediumImpact();
+    } else if (returned < _staked) {
+      HapticFeedback.heavyImpact();
+    }
+    setState(() {
+      _message = message;
+      _phase = _TablePhase.settled;
+      _bet = _bet.clamp(Blackjack.minBet, math.max(Blackjack.minBet, math.min(Blackjack.maxBet, game.insightPoints)));
+    });
+  }
+
+  void _addChip(int amount) {
+    HapticFeedback.selectionClick();
+    setState(() => _bet = math.min(math.min(Blackjack.maxBet, game.insightPoints), _bet + amount));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope<Object?>(
+      canPop: _phase == _TablePhase.betting || _phase == _TablePhase.settled,
+      onPopInvokedWithResult: (bool didPop, Object? result) {
+        if (!didPop) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(const SnackBar(
+              backgroundColor: Palette.surfaceHigh,
+              content: Text('Finish the hand first.', style: TextStyle(color: Palette.textPrimary)),
+            ));
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0E3B2E),
+        body: SafeArea(
+          child: Column(
+            children: <Widget>[
+              _buildTopBar(),
+              Expanded(child: _buildTable()),
+              _buildControls(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopBar() {
+    final stats = game.blackjackStats;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 12, 0),
+      child: Row(
+        children: <Widget>[
+          IconButton(
+            onPressed: () => Navigator.of(context).maybePop(),
+            icon: const Icon(Icons.close, color: Colors.white70),
+          ),
+          const Expanded(
+            child: Text('BLACKJACK',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, letterSpacing: 2)),
+          ),
+          StatPill(emoji: '💡', label: '${game.insightPoints} IP', color: Palette.gold, tooltip: 'Your bankroll'),
+          IconButton(
+            tooltip: 'Table info',
+            icon: const Icon(Icons.info_outline, color: Colors.white70),
+            onPressed: () => showDialog<void>(
+              context: context,
+              builder: (dialogContext) => AlertDialog(
+                backgroundColor: Palette.surface,
+                title: const Text('Table rules', style: TextStyle(color: Palette.textPrimary)),
+                content: Text(
+                  '4-deck shoe, reshuffled when about 3/4 is used. Dealer stands on all 17s. Blackjack pays 3:2. '
+                  'Double on your first two cards. No splitting.\n\n'
+                  'Bets: ${Blackjack.minBet}–${Blackjack.maxBet} IP. Play money only. Out of IP? Train to earn more.\n\n'
+                  'Your record: ${stats[0]} hands · net ${stats[1] >= 0 ? '+' : ''}${stats[1]} IP · biggest win ${stats[2]} IP'
+                  '${_strategyMoves > 0 ? '\nThis session: ${(100 * _strategyCorrect / _strategyMoves).round()}% basic-strategy moves' : ''}',
+                  style: const TextStyle(color: Palette.textMuted, height: 1.4),
+                ),
+                actions: <Widget>[
+                  TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('OK')),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _handRow(List<PlayingCard> hand, {bool hideSecond = false}) {
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: 6,
+      runSpacing: 6,
+      children: <Widget>[
+        for (var i = 0; i < hand.length; i++) _MiniCard(card: hand[i], hidden: hideSecond && i == 1),
+      ],
+    );
+  }
+
+  String _totalText(List<PlayingCard> hand) {
+    final v = Blackjack.handValue(hand);
+    return v.soft && v.total < 21 ? 'soft ${v.total}' : '${v.total}';
+  }
+
+  Widget _buildTable() {
+    if (_player.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            game.insightPoints < Blackjack.minBet
+                ? 'You\'re out of IP. Earn more in Cold Reading, Practice or the Memory Gym, then come back.'
+                : 'Place your bet and tap Deal.\n\nTip: when the count is high, bet more.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70, fontSize: 16, height: 1.5),
+          ),
+        ),
+      );
+    }
+    final hideHole = _holeHidden;
+    final dealerShown = hideHole ? <PlayingCard>[_dealer.first] : _dealer;
+    final advice = _phase == _TablePhase.player ? Blackjack.advice(_player, _dealer.first, canDouble: _canDouble) : null;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      children: <Widget>[
+        Text('DEALER · ${_totalText(dealerShown)}${hideHole ? ' + ?' : ''}',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+        const SizedBox(height: 8),
+        _handRow(_dealer, hideSecond: hideHole),
+        const SizedBox(height: 22),
+        if (_message.isNotEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+            decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(12)),
+            child: Text(_message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900)),
+          ),
+        if (_message.isEmpty && _justShuffled && _phase == _TablePhase.player)
+          const Text('Fresh shoe: the count starts at 0.',
+              textAlign: TextAlign.center, style: TextStyle(color: Colors.white60)),
+        const SizedBox(height: 22),
+        _handRow(_player),
+        const SizedBox(height: 8),
+        Text('YOU · ${_totalText(_player)} · bet $_staked IP',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+        if (_coach && advice != null) ...<Widget>[
+          const SizedBox(height: 12),
+          InfoBanner(icon: Icons.school, color: Palette.gold, text: 'Coach: basic strategy says $advice.'),
+        ],
+        if (_countHelper) ...<Widget>[
+          const SizedBox(height: 10),
+          Text(
+            'Running count ${_runningCount >= 0 ? '+' : ''}$_runningCount · true count ${_trueCount.toStringAsFixed(1)} · '
+            '${_decksLeft.toStringAsFixed(1)} decks left',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildControls() {
+    final toggles = Row(
+      children: <Widget>[
+        Expanded(
+          child: SwitchListTile(
+            dense: true,
+            value: _coach,
+            onChanged: (v) => setState(() => _coach = v),
+            title: const Text('Coach', style: TextStyle(color: Colors.white)),
+          ),
+        ),
+        Expanded(
+          child: SwitchListTile(
+            dense: true,
+            value: _countHelper,
+            onChanged: (v) => setState(() => _countHelper = v),
+            title: const Text('Show count', style: TextStyle(color: Colors.white)),
+          ),
+        ),
+      ],
+    );
+    final Widget actions;
+    if (_phase == _TablePhase.player) {
+      actions = Row(
+        children: <Widget>[
+          Expanded(child: ChunkyButton(label: 'Hit', color: Palette.green, height: 50, onPressed: _hit)),
+          const SizedBox(width: 8),
+          Expanded(child: ChunkyButton(label: 'Stand', color: Palette.red, height: 50, onPressed: _stand)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: ChunkyButton(label: 'Double', color: Palette.blue, height: 50, onPressed: _canDouble ? _double : null),
+          ),
+        ],
+      );
+    } else if (_phase == _TablePhase.dealer) {
+      actions = const SizedBox(
+        height: 55,
+        child: Center(child: Text('Dealer is drawing…', style: TextStyle(color: Colors.white70, fontSize: 16))),
+      );
+    } else {
+      final canAfford = game.insightPoints >= Blackjack.minBet;
+      actions = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              for (final chip in <int>[5, 25, 100]) ...<Widget>[
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: canAfford ? () => _addChip(chip) : null,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: Colors.white38),
+                      minimumSize: const Size.fromHeight(44),
+                    ),
+                    child: Text('+$chip'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: canAfford ? () => setState(() => _bet = Blackjack.minBet) : null,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white70,
+                    side: const BorderSide(color: Colors.white24),
+                    minimumSize: const Size.fromHeight(44),
+                  ),
+                  child: const Text('Min'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ChunkyButton(
+            label: canAfford ? 'Deal · bet $_bet IP' : 'Not enough IP',
+            color: Palette.gold,
+            textColor: const Color(0xFF1A1A1A),
+            onPressed: canAfford && _bet <= game.insightPoints ? _deal : null,
+          ),
+        ],
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+      color: const Color(0xFF0A2C22),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[toggles, actions],
+      ),
+    );
+  }
+}
+
+class _MiniCard extends StatelessWidget {
+  const _MiniCard({required this.card, this.hidden = false});
+  final PlayingCard card;
+  final bool hidden;
+
+  @override
+  Widget build(BuildContext context) {
+    if (hidden) {
+      return Container(
+        width: 62,
+        height: 88,
+        decoration: BoxDecoration(
+          color: const Color(0xFF8E1B1B),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white, width: 3),
+        ),
+        child: const Center(child: Text('?', style: TextStyle(color: Colors.white70, fontSize: 28, fontWeight: FontWeight.w900))),
+      );
+    }
+    final color = card.red ? const Color(0xFFD32F2F) : const Color(0xFF1A1A1A);
+    return Container(
+      width: 62,
+      height: 88,
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        boxShadow: const <BoxShadow>[BoxShadow(color: Colors.black45, blurRadius: 6, offset: Offset(0, 3))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(card.rank, style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.w900, height: 1)),
+          Expanded(child: Center(child: Text(card.suit, style: TextStyle(color: color, fontSize: 30)))),
         ],
       ),
     );
