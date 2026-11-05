@@ -2521,7 +2521,7 @@ class Curriculum {
     ),
     // ── Level 9: Checkable Details ──────────────────────────────────────
     Challenge.statement(
-      id: 'v1',
+      id: 'ck1',
       flag: Flag.unverifiable,
       level: 9,
       prompt: 'Tap the sentence that can\'t be checked where it matters, if there is one.',
@@ -2535,7 +2535,7 @@ class Curriculum {
       insight: 'The first and last sentences can be checked: a named restaurant, a named sister, a text. The hours that matter are spent alone, nowhere, with nothing to check. Liars put the uncheckable details exactly where the gap is.',
     ),
     Challenge.statement(
-      id: 'v2',
+      id: 'ck2',
       flag: Flag.cleanStatement,
       level: 9,
       prompt: 'Tap the sentence that can\'t be checked where it matters, if there is one.',
@@ -2549,7 +2549,7 @@ class Curriculum {
       insight: 'Every sentence names a person, a time or a record someone could check: the drawer count, the delivery slip, the time clock. Truth-tellers offer checkable details freely because they know they\'ll hold up.',
     ),
     Challenge.statement(
-      id: 'v3',
+      id: 'ck3',
       flag: Flag.vagueCore,
       level: 9,
       prompt: 'Tap the sentence that can\'t be checked where it matters, if there is one.',
@@ -2564,7 +2564,7 @@ class Curriculum {
       insight: 'Precise before and after (Route 9, level two, the Target doors), then a blur right where the dent happened. Detail that drops out only at the key moment is a classic sign of an edited story.',
     ),
     Challenge.statement(
-      id: 'v4',
+      id: 'ck4',
       flag: Flag.cleanStatement,
       level: 9,
       prompt: 'Tap the sentence that can\'t be checked where it matters, if there is one.',
@@ -2578,7 +2578,7 @@ class Curriculum {
       insight: 'Store, street, times, a tow company and a receipt: all checkable. She even includes a detail that makes the story messier (it died again). The unnamed guy isn\'t a flag here; the key events don\'t depend on him.',
     ),
     Challenge.statement(
-      id: 'v5',
+      id: 'ck5',
       flag: Flag.unverifiable,
       level: 9,
       prompt: 'Tap the sentence that can\'t be checked where it matters, if there is one.',
@@ -2592,7 +2592,7 @@ class Curriculum {
       insight: 'Where the answers came from is the key fact, and it\'s the one detail nobody can trace: an unnamed kid in an unnamed chat. Ask: "Which chat? Show me." Truth-tellers can usually point you to it.',
     ),
     Challenge.statement(
-      id: 'v6',
+      id: 'ck6',
       flag: Flag.cleanStatement,
       level: 9,
       prompt: 'Tap the sentence that can\'t be checked where it matters, if there is one.',
@@ -2606,7 +2606,7 @@ class Curriculum {
       insight: 'A teacher, a timed pass she still has, and a nurse who can confirm it. Everything important can be checked, and she points you to the proof herself.',
     ),
     Challenge.statement(
-      id: 'v7',
+      id: 'ck7',
       flag: Flag.vagueCore,
       level: 9,
       prompt: 'Tap the sentence that can\'t be checked where it matters, if there is one.',
@@ -2620,7 +2620,7 @@ class Curriculum {
       insight: 'Exact times on both sides, and the missing two hours get "stuff" and "things". Real traffic comes with a road, a crash, a detour. Ask: "Which road? Where were you stuck?"',
     ),
     Challenge.statement(
-      id: 'v8',
+      id: 'ck8',
       flag: Flag.unverifiable,
       level: 9,
       prompt: 'Tap the sentence that can\'t be checked where it matters, if there is one.',
@@ -2634,7 +2634,7 @@ class Curriculum {
       insight: 'The money is tracked carefully, with a named coach and a locker, right up until it leaves his hands. Then it goes to "a parent" with no name. The handoff is the one moment that matters, and the one you can\'t check.',
     ),
     Challenge.statement(
-      id: 'v9',
+      id: 'ck9',
       flag: Flag.unverifiable,
       level: 9,
       prompt: 'Tap the sentence that can\'t be checked where it matters, if there is one.',
@@ -2648,7 +2648,7 @@ class Curriculum {
       insight: 'A real appointment comes with a clinic name, a parking lot, a co-pay. "I forget the name" sits exactly on the checkable part. Ask for the appointment text or the bill.',
     ),
     Challenge.statement(
-      id: 'v10',
+      id: 'ck10',
       flag: Flag.unverifiable,
       level: 9,
       highLoad: true,
@@ -2665,7 +2665,7 @@ class Curriculum {
       insight: 'Everything around the theft is checkable: the badge, the Wi-Fi, security. But the only witness to the moment itself is an unnamed stranger. Check the security report: did it mention him?',
     ),
     Challenge.statement(
-      id: 'v11',
+      id: 'ck11',
       flag: Flag.cleanStatement,
       level: 9,
       highLoad: true,
@@ -2681,7 +2681,7 @@ class Curriculum {
       insight: 'A qualifier like "honestly" isn\'t a flag on its own. Here it\'s attached to an admission against herself. The rest is checkable: payday, the holiday, a timestamped payment.',
     ),
     Challenge.statement(
-      id: 'v12',
+      id: 'ck12',
       flag: Flag.vagueCore,
       level: 9,
       highLoad: true,
@@ -2697,7 +2697,7 @@ class Curriculum {
       insight: 'Two hours are missing between midnight and 2 a.m., and they\'re the only vague part. Notice the offer to "ask Jake\'s mom" covers the pickup and drop-off, not the middle. Ask where they were hanging out.',
     ),
     Challenge.statement(
-      id: 'v13',
+      id: 'ck13',
       flag: Flag.cleanStatement,
       level: 9,
       highLoad: true,
@@ -2713,7 +2713,7 @@ class Curriculum {
       insight: 'A store, an order number, a dated photo and an email he offers to forward. When someone hands you the means to check their story, that\'s one of the strongest truth signals there is.',
     ),
     Challenge.statement(
-      id: 'v14',
+      id: 'ck14',
       flag: Flag.unverifiable,
       level: 9,
       highLoad: true,
@@ -2731,7 +2731,7 @@ class Curriculum {
 
     // ── Level 10: Making Lies Hard Work ─────────────────────────────────
     Challenge.scenario(
-      id: 'k1',
+      id: 'lw1',
       level: 10,
       flag: Flag.cognitiveLoad,
       context: 'Your little brother says he was at Sam\'s house all afternoon. You think he was at the skate park he\'s banned from. His story comes out smooth, like he practiced it.',
@@ -2745,7 +2745,7 @@ class Curriculum {
       insight: 'A rehearsed story runs smoothly forward. Telling it in reverse adds mental load: a liar has to rebuild it, while a truth-teller just remembers. Watch for stalls and new contradictions.',
     ),
     Challenge.scenario(
-      id: 'k2',
+      id: 'lw2',
       level: 10,
       flag: Flag.cognitiveLoad,
       context: 'A coworker says she missed the meeting because she was stuck at the dentist. Her answer came fast and complete.',
@@ -2759,7 +2759,7 @@ class Curriculum {
       insight: 'Time and place are the questions liars prepare for. An unexpected question about a side detail raises the load. A truth-teller answers it easily; a liar stalls or goes generic.',
     ),
     Challenge.scenario(
-      id: 'k3',
+      id: 'lw3',
       level: 10,
       flag: Flag.evidenceTiming,
       context: 'You found a receipt showing your friend was at the mall on Friday, but he told the group he was home sick. You want the truth.',
@@ -2773,7 +2773,7 @@ class Curriculum {
       insight: 'Strategic Use of Evidence: if you reveal what you know first, a liar just builds the story around it. Let him commit to a version, then compare it with the receipt. A truthful story will fit; a lie won\'t.',
     ),
     Challenge.scenario(
-      id: 'k4',
+      id: 'lw4',
       level: 10,
       flag: Flag.evidenceTiming,
       context: 'Your sister says she never borrowed your hoodie. You saw it in her laundry pile this morning.',
@@ -2787,7 +2787,7 @@ class Curriculum {
       insight: 'A question she can answer either way lets her commit. If she says "I haven\'t seen it in weeks", you\'ve caught a clear contradiction instead of starting an argument.',
     ),
     Challenge.scenario(
-      id: 'k5',
+      id: 'lw5',
       level: 10,
       flag: Flag.cognitiveLoad,
       context: 'A job candidate says he led a big project at his last job. His answers sound polished, like he\'s given them many times.',
@@ -2801,7 +2801,7 @@ class Curriculum {
       insight: 'Drawing or laying things out forces specifics a rehearsed answer doesn\'t have. People who did the work place names and roles easily; people inflating their role go vague.',
     ),
     Challenge.scenario(
-      id: 'k6',
+      id: 'lw6',
       level: 10,
       flag: Flag.cognitiveLoad,
       context: 'A friend says she can\'t come to your party because of "just a family thing." Her answer is short and vague.',
@@ -2815,7 +2815,7 @@ class Curriculum {
       insight: 'A real plan expands easily: "my aunt\'s house, my cousins from Ohio". A cover story stays thin. Asking for more, in a friendly way, is the simplest load-raiser there is. (And if she just doesn\'t want to come, you\'ve learned that too.)',
     ),
     Challenge.scenario(
-      id: 'k7',
+      id: 'lw7',
       level: 10,
       flag: Flag.evidenceTiming,
       context: 'The class hamster got out. One student had cage duty, and the sign-in sheet shows he went into the classroom at lunch. He doesn\'t know you\'ve seen it.',
@@ -2829,7 +2829,7 @@ class Curriculum {
       insight: 'Let him tell his lunch period in his own words first. If he leaves out the classroom visit, that omission is your best clue. Bring up the sign-in sheet only after he\'s committed.',
     ),
     Challenge.scenario(
-      id: 'k8',
+      id: 'lw8',
       level: 10,
       flag: Flag.cognitiveLoad,
       context: 'Your friend tells an unlikely story about meeting a famous rapper at a gas station. You want to test it without calling him a liar.',
@@ -2843,7 +2843,7 @@ class Curriculum {
       insight: 'True memories keep the same core details when retold. Invented ones drift (the time changes, the car changes) or come out word-for-word like a script. Retelling tests a story without accusing anyone.',
     ),
     Challenge.scenario(
-      id: 'k9',
+      id: 'lw9',
       level: 10,
       flag: Flag.evidenceTiming,
       highLoad: true,
@@ -2858,7 +2858,7 @@ class Curriculum {
       insight: 'Let her describe her routine and when voids happen ("only when a customer changes their mind"). Then bring out the 2 to 3 p.m. pattern piece by piece. Evidence she can\'t square with her own story beats any pushed confession. Bluffing about cameras can make an innocent person panic too.',
     ),
     Challenge.scenario(
-      id: 'k10',
+      id: 'lw10',
       level: 10,
       flag: Flag.cognitiveLoad,
       highLoad: true,
@@ -2873,7 +2873,7 @@ class Curriculum {
       insight: 'People covering for each other agree on the main story but not the side details they didn\'t plan. Separate questions about small, unexpected details show mismatches. Together, they just follow each other\'s lead.',
     ),
     Challenge.scenario(
-      id: 'k11',
+      id: 'lw11',
       level: 10,
       flag: Flag.evidenceTiming,
       highLoad: true,
@@ -2888,7 +2888,7 @@ class Curriculum {
       insight: 'Close the exits before you show evidence. If he first says "nobody else drives my car" and "I threw all my vape stuff out", the charger means something. Show it first and he\'ll say it\'s a friend\'s, or old.',
     ),
     Challenge.scenario(
-      id: 'k12',
+      id: 'lw12',
       level: 10,
       flag: Flag.cognitiveLoad,
       highLoad: true,
@@ -2905,7 +2905,7 @@ class Curriculum {
 
     // ── Level 11: Myths & False Alarms ──────────────────────────────────
     Challenge.scenario(
-      id: 'f1',
+      id: 'mf1',
       level: 11,
       flag: Flag.mythBusting,
       prompt: 'What\'s the best read?',
@@ -2920,7 +2920,7 @@ class Curriculum {
       insight: 'Gaze aversion is the most famous "tell", and it\'s a myth. Studies find almost no link between eye contact and lying. People look away to think, from shyness, or because of their culture. Practiced liars often hold eye contact on purpose.',
     ),
     Challenge.scenario(
-      id: 'f2',
+      id: 'mf2',
       level: 11,
       flag: Flag.othelloError,
       prompt: 'What\'s the best read?',
@@ -2935,7 +2935,7 @@ class Curriculum {
       insight: 'This is the Othello error, named after Shakespeare\'s Othello, who read Desdemona\'s fear as guilt. Honest people get scared of not being believed, especially by an angry parent. Fear tells you about the situation, not the truth.',
     ),
     Challenge.scenario(
-      id: 'f3',
+      id: 'mf3',
       level: 11,
       flag: Flag.mythBusting,
       prompt: 'What\'s the best read?',
@@ -2950,7 +2950,7 @@ class Curriculum {
       insight: 'This comes from an old NLP claim. When researchers actually tested it, eye direction didn\'t predict lying at all. It spreads because it sounds scientific.',
     ),
     Challenge.scenario(
-      id: 'f4',
+      id: 'mf4',
       level: 11,
       flag: Flag.othelloError,
       prompt: 'What\'s the best read?',
@@ -2965,7 +2965,7 @@ class Curriculum {
       insight: 'Judging by personality or "shifty" behavior is how innocent people get blamed. Nervous, quiet and awkward are traits, not evidence. Ask what anyone actually saw.',
     ),
     Challenge.scenario(
-      id: 'f5',
+      id: 'mf5',
       level: 11,
       flag: Flag.mythBusting,
       prompt: 'What\'s the best read?',
@@ -2980,7 +2980,7 @@ class Curriculum {
       insight: 'The "Pinocchio effect" got lots of press but never held up as a reliable sign. Nose touching is a common habit. At most it matters as a change from someone\'s own baseline, together with other signals.',
     ),
     Challenge.scenario(
-      id: 'f6',
+      id: 'mf6',
       level: 11,
       flag: Flag.othelloError,
       prompt: 'What\'s the best read?',
@@ -2995,7 +2995,7 @@ class Curriculum {
       insight: 'People react to stress in wildly different ways: tears, anger, flat calm. Online crowds judging "fake" emotion have turned on innocent people. Emotional displays are not lie detectors.',
     ),
     Challenge.scenario(
-      id: 'f7',
+      id: 'mf7',
       level: 11,
       flag: Flag.mythBusting,
       prompt: 'What\'s the best read?',
@@ -3010,7 +3010,7 @@ class Curriculum {
       insight: 'A polygraph records heart rate, breathing and sweat: arousal, not lying. Nervous honest people can fail, and calm liars can pass. That\'s why most US courts don\'t accept the results as evidence.',
     ),
     Challenge.scenario(
-      id: 'f8',
+      id: 'mf8',
       level: 11,
       flag: Flag.othelloError,
       prompt: 'What\'s the best read?',
@@ -3025,7 +3025,7 @@ class Curriculum {
       insight: 'People pause to remember, to decide how much to share, or because the question surprised them. A pause is a cue to listen closely, not a verdict. What she says, and whether it can be checked, matters far more.',
     ),
     Challenge.scenario(
-      id: 'f9',
+      id: 'mf9',
       level: 11,
       flag: Flag.othelloError,
       prompt: 'What\'s the best read?',
@@ -3041,7 +3041,7 @@ class Curriculum {
       insight: 'Alex\'s embarrassment fits an innocent person afraid of being blamed; Morgan\'s calm fits someone who doesn\'t care, or someone practiced. Notice Alex offered something checkable: his bag. Go by evidence, not reactions.',
     ),
     Challenge.scenario(
-      id: 'f10',
+      id: 'mf10',
       level: 11,
       flag: Flag.mythBusting,
       prompt: 'What\'s the best read?',
@@ -3057,7 +3057,7 @@ class Curriculum {
       insight: 'Popular books overstate single gestures. People cross their arms because they\'re cold, comfortable, or it\'s their habit. A gesture means something only as a change from their baseline, clustered with other changes, on a specific topic.',
     ),
     Challenge.scenario(
-      id: 'f11',
+      id: 'mf11',
       level: 11,
       flag: Flag.mythBusting,
       prompt: 'What\'s the best read?',
@@ -3073,7 +3073,7 @@ class Curriculum {
       insight: 'Research finds confidence and lie-detection accuracy are barely related. Feeling sure isn\'t evidence. Use your record to find which clues work for you, and drop the ones that don\'t.',
     ),
     Challenge.scenario(
-      id: 'f12',
+      id: 'mf12',
       level: 11,
       flag: Flag.othelloError,
       prompt: 'What\'s the best read?',
@@ -3091,7 +3091,7 @@ class Curriculum {
 
     // ── Level 12: Deduction & Cold Reading ──────────────────────────────
     Challenge.scenario(
-      id: 'j1',
+      id: 'dj1',
       level: 12,
       flag: Flag.deduction,
       prompt: 'What\'s the best read?',
@@ -3106,7 +3106,7 @@ class Curriculum {
       insight: 'Two separate clues point to the same thing: paint on the shoes, sun on the neck. Patrick Jane-style reading means combining small physical clues, not finding one dramatic tell. Then test it: "So what did you paint?"',
     ),
     Challenge.scenario(
-      id: 'j2',
+      id: 'dj2',
       level: 12,
       flag: Flag.deduction,
       prompt: 'What\'s the best read?',
@@ -3121,7 +3121,7 @@ class Curriculum {
       insight: 'Mustache + bowler hat + silent-movie music = Chaplin. Jane rarely gets one big clue; he lets several small ones narrow the options until only one fits. For your friend\'s real costume, collect what he buys, searches for and talks about.',
     ),
     Challenge.scenario(
-      id: 'j3',
+      id: 'dj3',
       level: 12,
       flag: Flag.coldReading,
       prompt: 'What\'s the best read?',
@@ -3136,7 +3136,7 @@ class Curriculum {
       insight: 'This is a Barnum statement: so general it fits nearly everyone, but it feels personal. Cold readers stack these to seem uncanny. Knowing the trick lets you spot it, and use it for fun.',
     ),
     Challenge.scenario(
-      id: 'j4',
+      id: 'dj4',
       level: 12,
       flag: Flag.coldReading,
       prompt: 'What\'s the best read?',
@@ -3151,7 +3151,7 @@ class Curriculum {
       insight: 'This is "shotgunning": vague guesses to a big crowd until someone connects. With hundreds of people, someone has an older relative who died with a J or G name. The audience remembers the hit and forgets the misses.',
     ),
     Challenge.scenario(
-      id: 'j5',
+      id: 'dj5',
       level: 12,
       flag: Flag.deduction,
       prompt: 'What\'s the best read?',
@@ -3166,7 +3166,7 @@ class Curriculum {
       insight: 'Fingertip calluses on the hand that presses the strings are a guitar tell. The wrist tan line only says she used to wear a watch. Good deduction uses each clue for what it actually supports and ignores the rest.',
     ),
     Challenge.scenario(
-      id: 'j6',
+      id: 'dj6',
       level: 12,
       flag: Flag.coldReading,
       prompt: 'What\'s the best read?',
@@ -3181,7 +3181,7 @@ class Curriculum {
       insight: 'A childhood knee scar is a classic high-probability guess: true for most people, but it feels specific. Cold readers lean on these. The skill is knowing which guesses are safe.',
     ),
     Challenge.scenario(
-      id: 'j7',
+      id: 'dj7',
       level: 12,
       flag: Flag.deduction,
       prompt: 'What\'s the best read?',
@@ -3196,7 +3196,7 @@ class Curriculum {
       insight: 'The new stuff explains why he\'s broke now. Jumping to "liar" ignores the simplest explanation that fits every clue. Deduction means picking the story that explains everything, not the most dramatic one.',
     ),
     Challenge.scenario(
-      id: 'j8',
+      id: 'dj8',
       level: 12,
       flag: Flag.deduction,
       prompt: 'What\'s the best read?',
@@ -3211,7 +3211,7 @@ class Curriculum {
       insight: 'Each clue alone has an innocent answer, but together they fit one story best: up late, watching on her phone. "Someone spoiled it" explains one clue; "stayed up" explains all three.',
     ),
     Challenge.scenario(
-      id: 'j9',
+      id: 'dj9',
       level: 12,
       flag: Flag.deduction,
       prompt: 'What\'s the best read?',
@@ -3227,7 +3227,7 @@ class Curriculum {
       insight: 'The suit fits lots of costumes; the blond hair narrows it; the calm smile and a line straight from the show settle it. Strong deductions use the most specific clue to choose between options the general clues allow.',
     ),
     Challenge.scenario(
-      id: 'j10',
+      id: 'dj10',
       level: 12,
       flag: Flag.coldReading,
       prompt: 'What\'s the best read?',
@@ -3243,7 +3243,7 @@ class Curriculum {
       insight: '"Work, school or a relationship" covers almost everything (the rainbow ruse), and your nod tells him which one to dig into next. Cold reading runs on feedback from the person being read.',
     ),
     Challenge.scenario(
-      id: 'j11',
+      id: 'dj11',
       level: 12,
       flag: Flag.deduction,
       prompt: 'What\'s the best read?',
@@ -3259,7 +3259,7 @@ class Curriculum {
       insight: 'The wet umbrella is easiest to explain by where it was raining. But a deduction isn\'t proof, and it\'s not your business unless it matters. Clues tell you where to ask, not what to accuse.',
     ),
     Challenge.scenario(
-      id: 'j12',
+      id: 'dj12',
       level: 12,
       flag: Flag.coldReading,
       prompt: 'What\'s the best read?',
