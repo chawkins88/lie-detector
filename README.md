@@ -100,6 +100,21 @@ about 5 minutes covers spaced review, Number Span and a rotating drill of the da
 
 Progress (both tabs) is saved on the phone with `shared_preferences`; nothing leaves the device.
 
+## Poker School
+
+On the Memory tab, below the Blackjack Table.
+
+- **6 lessons:** how a hand works, hand rankings, which hands to play, outs & odds,
+  reading players, bluffing & home games.
+- **5 drills** (10 questions each): Name That Hand, Who Wins?, Play or Fold?,
+  Count the Outs, Call or Fold? (pot odds).
+- **Heads-up Hold'em table** (blinds 5/10, up to 500 IP) against Rex (tight & honest),
+  Lola (loose & chatty) or Vic (the actor). Each has a baseline and tells that are right
+  about 80% of the time; after each hand you see what any tell really meant.
+  Optional coach shows your hand, win chance and pot odds.
+
+Blackjack pays 3 to 2: a 10 IP bet wins 15 on a blackjack.
+
 ## Progress
 
 The fourth tab shows whether you're actually getting better.
@@ -115,7 +130,7 @@ The fourth tab shows whether you're actually getting better.
   no feedback until the end. Same shape every time, so scores compare fairly.
   Shows first / best / latest and what you missed.
 - **Weak Spot Training.** Ten questions aimed at your three least accurate skills.
-- **Memory records** and **39 badges**. Badges, missions and rank-ups pop up at
+- **Memory records** and **41 badges**. Badges, missions and rank-ups pop up at
   the top of the screen when you earn them.
 
 ## Game rules

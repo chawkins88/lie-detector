@@ -3390,6 +3390,34 @@ class GameState extends ChangeNotifier {
     _changed();
   }
 
+  /// Poker: [hands, hands won, net IP, biggest pot won].
+  final List<int> pokerStats = <int>[0, 0, 0, 0];
+  final Map<String, int> pokerBest = <String, int>{};
+  static const int pokerDrillIp = 2;
+
+  /// Settles a finished poker hand: [net] IP won (or lost, if negative).
+  void settlePoker({required int net, required bool won, required int pot}) {
+    insightPoints = math.max(0, insightPoints + net);
+    pokerStats[0]++;
+    if (won) {
+      pokerStats[1]++;
+      pokerStats[3] = math.max(pokerStats[3], pot);
+    }
+    pokerStats[2] += net;
+    _bump(MissionKind.poker);
+    _changed();
+  }
+
+  /// Returns true for a new best on that drill.
+  bool reportPokerDrill(String drill, int score) {
+    insightPoints += score * pokerDrillIp;
+    final best = score > (pokerBest[drill] ?? -1);
+    if (best) pokerBest[drill] = score;
+    _touchStreak();
+    _changed();
+    return best;
+  }
+
   /// Practice hub: best scores, questions to review, daily case.
   final Map<String, int> practiceBest = <String, int>{};
   final Set<String> mistakes = <String>{};
@@ -3847,6 +3875,8 @@ class GameState extends ChangeNotifier {
         'missions': <String, int>{for (final e in missionProgress.entries) e.key.name: e.value},
         'missionsAll': missionsAllDoneDays,
         'achievements': achievements.toList(),
+        'poker': pokerStats,
+        'pokerBest': pokerBest,
       };
 
   @visibleForTesting
@@ -3930,6 +3960,13 @@ class GameState extends ChangeNotifier {
       final hadBadges = ach is List;
       if (ach is List) achievements.addAll(ach.whereType<String>());
       _introBadges = !hadBadges && totalAnswered > 0;
+      final pk = data['poker'];
+      if (pk is List && pk.length == 4 && pk.every((v) => v is int)) {
+        for (var i = 0; i < 4; i++) {
+          pokerStats[i] = pk[i] as int;
+        }
+      }
+      _readCounts(data['pokerBest'], pokerBest, <String, String>{for (final d in PokerDrill.values) d.name: d.name});
       final clues = data['clues'];
       if (clues is Map) {
         final byName = LieClue.values.asNameMap();
@@ -4027,6 +4064,7 @@ enum MissionKind {
   daily('Solve the Daily Case File', '📁', 1, 2),
   consultant('Get a confession in The Consultant', '🕵️', 1, 2),
   hands('Play 5 blackjack hands', '♠️', 5, 2),
+  poker('Play 5 poker hands', '♣️', 5, 2),
   weak('Finish a Weak Spot Training run', '🩹', 1, 2);
 
   const MissionKind(this.title, this.emoji, this.target, this.group);
@@ -4098,6 +4136,9 @@ class Achievement {
     Achievement('count5', '🃏', 'Counter', 'Reach Card Counting level 5.', (g) => _best(g, MemoryDrill.cards) >= 5),
     Achievement('count10', '🎰', 'Advantage Player', 'Reach Card Counting level 10.', (g) => _best(g, MemoryDrill.cards) >= 10),
     Achievement('hands50', '♠️', 'Regular', 'Play 50 blackjack hands.', (g) => g.blackjackStats[0] >= 50),
+    Achievement('poker25', '♣️', 'Card Shark', 'Play 25 poker hands.', (g) => g.pokerStats[0] >= 25),
+    Achievement('pokerDrills', '📐', 'Poker Scholar', 'Score 8/10 or better on every Poker School drill.',
+        (g) => PokerDrill.values.every((d) => (g.pokerBest[d.name] ?? 0) >= 8)),
     Achievement('bigwin', '💰', 'High Roller', 'Win 300+ IP in one blackjack hand.', (g) => g.blackjackStats[2] >= 300),
     Achievement('case1', '🔎', 'First Confession', 'Solve a Consultant case.', (g) => g.caseStars.values.any((s) => s > 0)),
     Achievement('allcases', '⭐', 'Patrick Would Be Proud', 'Get 3 stars on every Consultant case.',
@@ -7473,6 +7514,18 @@ class _MemoryGymScreenState extends State<MemoryGymScreen> {
               color: Palette.red,
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(builder: (_) => BlackjackScreen(game: game)),
+              ),
+            ),
+            _BigModeCard(
+              emoji: '♣️',
+              title: 'Poker School',
+              subtitle: 'Learn Texas Hold\'em: lessons, drills, and a table where you read your opponent\'s tells.',
+              status: game.pokerStats[0] == 0
+                  ? 'Start with lesson 1'
+                  : '${game.pokerStats[0]} hands · net ${game.pokerStats[2] >= 0 ? '+' : ''}${game.pokerStats[2]} IP',
+              color: Palette.indigo,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => PokerSchoolScreen(game: game)),
               ),
             ),
             const SizedBox(height: 12),
@@ -14110,7 +14163,7 @@ class _BlackjackScreenState extends State<BlackjackScreen> {
       if (playerBj && dealerBj) {
         _settle(_staked, 'Both blackjack. Push.');
       } else if (playerBj) {
-        _settle(_staked + (_staked * 3) ~/ 2, 'Blackjack! Paid 3 to 2.');
+        _settle(_staked + (_staked * 3) ~/ 2, 'Blackjack! Pays 3 to 2: +${(_staked * 3) ~/ 2} IP on your $_staked bet.');
       } else {
         _settle(0, 'Dealer has blackjack.');
       }
@@ -14484,6 +14537,1600 @@ class _MiniCard extends StatelessWidget {
         children: <Widget>[
           Text(card.rank, style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.w900, height: 1)),
           Expanded(child: Center(child: Text(card.suit, style: TextStyle(color: color, fontSize: 30)))),
+        ],
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  POKER SCHOOL: Texas Hold'em engine, opponents, drills
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Cards are ints 0–51: rank = c ~/ 4 (0 = two … 12 = ace), suit = c % 4.
+class Poker {
+  Poker._();
+
+  static const List<String> rankChars = <String>['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+  static const List<String> suitChars = <String>['♠', '♥', '♦', '♣'];
+  static const List<String> _single = <String>[
+    'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Jack', 'Queen', 'King', 'Ace', //
+  ];
+  static const List<String> _plural = <String>[
+    'Twos', 'Threes', 'Fours', 'Fives', 'Sixes', 'Sevens', 'Eights', 'Nines', 'Tens', 'Jacks', 'Queens', 'Kings', 'Aces', //
+  ];
+  static const List<String> categories = <String>[
+    'High card', 'Pair', 'Two pair', 'Three of a kind', 'Straight', 'Flush', 'Full house', 'Four of a kind', //
+    'Straight flush',
+  ];
+
+  static int rank(int c) => c ~/ 4;
+  static int suit(int c) => c % 4;
+  static int card(int rank, int suit) => rank * 4 + suit;
+  static PlayingCard face(int c) => PlayingCard(rankChars[rank(c)], suitChars[suit(c)]);
+
+  static const int _base = 1048576; // 16^5
+
+  static int _score(int category, List<int> ranks) {
+    var s = category;
+    for (var i = 0; i < 5; i++) {
+      s = s * 16 + (i < ranks.length ? ranks[i] + 1 : 0);
+    }
+    return s;
+  }
+
+  static int categoryOf(int score) => score ~/ _base;
+
+  static int _kicker(int score, int i) {
+    var v = score;
+    for (var n = 0; n < 4 - i; n++) {
+      v ~/= 16;
+    }
+    return v % 16 - 1;
+  }
+
+  /// Top card of the best straight in [ranks], or -1. A-2-3-4-5 counts (five high).
+  static int _straightHigh(Set<int> ranks) {
+    for (var h = 12; h >= 4; h--) {
+      if (ranks.contains(h) &&
+          ranks.contains(h - 1) &&
+          ranks.contains(h - 2) &&
+          ranks.contains(h - 3) &&
+          ranks.contains(h - 4)) {
+        return h;
+      }
+    }
+    if (ranks.containsAll(<int>[12, 0, 1, 2, 3])) return 3;
+    return -1;
+  }
+
+  /// The best 5-card hand in 5–7 cards, as a score: higher wins, equal ties.
+  static int evaluate(List<int> cards) {
+    final counts = List<int>.filled(13, 0);
+    final suits = List<int>.filled(4, 0);
+    for (final c in cards) {
+      counts[rank(c)]++;
+      suits[suit(c)]++;
+    }
+    final flushSuit = suits.indexWhere((n) => n >= 5);
+    if (flushSuit >= 0) {
+      final sf = _straightHigh(cards.where((c) => suit(c) == flushSuit).map(rank).toSet());
+      if (sf >= 0) return _score(8, <int>[sf]);
+    }
+    final desc = <int>[for (var r = 12; r >= 0; r--) r];
+    final quads = desc.where((r) => counts[r] == 4).toList();
+    final trips = desc.where((r) => counts[r] == 3).toList();
+    final pairs = desc.where((r) => counts[r] == 2).toList();
+    final present = desc.where((r) => counts[r] > 0).toList();
+    if (quads.isNotEmpty) {
+      final q = quads.first;
+      return _score(7, <int>[q, present.firstWhere((r) => r != q)]);
+    }
+    if (trips.isNotEmpty && (trips.length > 1 || pairs.isNotEmpty)) {
+      final t = trips.first;
+      final p = <int>[...trips.skip(1), ...pairs].reduce(math.max);
+      return _score(6, <int>[t, p]);
+    }
+    if (flushSuit >= 0) {
+      final fr = cards.where((c) => suit(c) == flushSuit).map(rank).toList()..sort((a, b) => b.compareTo(a));
+      return _score(5, fr.take(5).toList());
+    }
+    final st = _straightHigh(present.toSet());
+    if (st >= 0) return _score(4, <int>[st]);
+    if (trips.isNotEmpty) {
+      final t = trips.first;
+      return _score(3, <int>[t, ...present.where((r) => r != t).take(2)]);
+    }
+    if (pairs.length >= 2) {
+      final a = pairs[0];
+      final b = pairs[1];
+      return _score(2, <int>[a, b, present.firstWhere((r) => r != a && r != b)]);
+    }
+    if (pairs.length == 1) {
+      final p = pairs.first;
+      return _score(1, <int>[p, ...present.where((r) => r != p).take(3)]);
+    }
+    return _score(0, present.take(5).toList());
+  }
+
+  static String describe(int score) {
+    final k0 = _kicker(score, 0);
+    final k1 = _kicker(score, 1);
+    return switch (categoryOf(score)) {
+      8 => k0 == 12 ? 'Royal flush' : 'Straight flush, ${_single[k0]} high',
+      7 => 'Four ${_plural[k0]}',
+      6 => '${_plural[k0]} full of ${_plural[k1]}',
+      5 => 'Flush, ${_single[k0]} high',
+      4 => 'Straight, ${_single[k0]} high',
+      3 => 'Three ${_plural[k0]}',
+      2 => 'Two pair, ${_plural[k0]} and ${_plural[k1]}',
+      1 => 'Pair of ${_plural[k0]}',
+      _ => '${_single[k0]} high',
+    };
+  }
+
+  /// "Pocket Kings", "Ace-Queen suited", "Nine-Four offsuit".
+  static String startingName(int a, int b) {
+    final hi = math.max(rank(a), rank(b));
+    final lo = math.min(rank(a), rank(b));
+    if (hi == lo) return 'Pocket ${_plural[hi]}';
+    return '${_single[hi]}-${_single[lo]} ${suit(a) == suit(b) ? 'suited' : 'offsuit'}';
+  }
+
+  /// A simple starting-hand guide. [late] means you act last (the button).
+  static bool playable(int a, int b, {required bool late}) {
+    final hi = math.max(rank(a), rank(b));
+    final lo = math.min(rank(a), rank(b));
+    final suited = suit(a) == suit(b);
+    if (hi == lo) return late || lo >= 5; // 7-7 and up anywhere
+    if (hi == 12) return lo >= 10 || (lo >= 9 && suited) || (late && (suited || lo >= 8));
+    if (hi == 11) return (lo >= 10 && suited) || (late && lo >= 9);
+    if (late && suited && hi - lo == 1 && lo >= 3) return true; // 6-5 suited and up
+    if (late && hi == 10 && lo == 9) return true; // Q-J
+    return false;
+  }
+
+  static String preflopTip(int a, int b, {required bool late}) {
+    final hi = math.max(rank(a), rank(b));
+    final lo = math.min(rank(a), rank(b));
+    final suited = suit(a) == suit(b);
+    final play = playable(a, b, late: late);
+    final String why;
+    if (hi == lo) {
+      why = lo >= 5
+          ? 'Pairs of sevens and up are strong from anywhere.'
+          : (late
+              ? 'Small pairs are fine when you act last: you\'re hoping to hit three of a kind.'
+              : 'Small pairs from up front lose money: you rarely hit three of a kind, and you act first.');
+    } else if (hi == 12) {
+      why = play
+          ? 'Big aces play anywhere; weaker aces only when you act last, ideally suited.'
+          : 'A weak ace up front gets you in trouble against players holding better aces.';
+    } else if (suited && hi - lo == 1) {
+      why = play
+          ? 'Suited connectors make straights and flushes, and they\'re worth it when you act last.'
+          : 'Suited connectors are only worth it when you act last and they\'re 6-5 or higher.';
+    } else {
+      why = play
+          ? 'Two high cards are worth playing, especially when you act last.'
+          : 'Most hands are folds. Good players fold about 3 of every 4 starting hands.';
+    }
+    return '${startingName(a, b)}: ${play ? 'play it' : 'fold it'}${late ? ' on the button' : ' up front'}. $why';
+  }
+
+  /// Chance to beat one random hand (ties count half), by simulation.
+  static double equity(List<int> hole, List<int> board, math.Random rng, {int trials = 300}) {
+    final used = <int>{...hole, ...board};
+    final deck = <int>[
+      for (var c = 0; c < 52; c++)
+        if (!used.contains(c)) c,
+    ];
+    final need = 2 + (5 - board.length);
+    var total = 0.0;
+    for (var t = 0; t < trials; t++) {
+      for (var i = 0; i < need; i++) {
+        final j = i + rng.nextInt(deck.length - i);
+        final tmp = deck[i];
+        deck[i] = deck[j];
+        deck[j] = tmp;
+      }
+      final runout = <int>[...board, ...deck.sublist(2, need)];
+      final me = evaluate(<int>[...hole, ...runout]);
+      final them = evaluate(<int>[deck[0], deck[1], ...runout]);
+      if (me > them) {
+        total += 1;
+      } else if (me == them) {
+        total += 0.5;
+      }
+    }
+    return total / trials;
+  }
+
+  /// Unseen cards that turn [cards] into a straight or better: (flush outs, straight outs).
+  static (int, int) drawOuts(List<int> cards) {
+    var flush = 0;
+    var straight = 0;
+    for (var c = 0; c < 52; c++) {
+      if (cards.contains(c)) continue;
+      final cat = categoryOf(evaluate(<int>[...cards, c]));
+      if (cat == 5 || cat == 8) {
+        flush++;
+      } else if (cat == 4) {
+        straight++;
+      }
+    }
+    return (flush, straight);
+  }
+}
+
+enum PokerStreet { preflop, flop, turn, river, done }
+
+/// One heads-up No-Limit Hold'em hand. Seat 0 is you, seat 1 the opponent.
+class HoldemHand {
+  HoldemHand({
+    required List<int> stacks,
+    required this.button,
+    required math.Random rng,
+    this.smallBlind = 5,
+    this.bigBlind = 10,
+  })  : stacks = List<int>.of(stacks),
+        startStacks = List<int>.of(stacks) {
+    _deck = List<int>.generate(52, (i) => i)..shuffle(rng);
+    holes = <List<int>>[
+      <int>[_deal(), _deal()],
+      <int>[_deal(), _deal()],
+    ];
+    _post(button, smallBlind);
+    _post(1 - button, bigBlind);
+    lastRaise = bigBlind;
+    toAct = button;
+  }
+
+  /// The button posts the small blind, acts first before the flop and last after it.
+  final int button;
+  final int smallBlind;
+  final int bigBlind;
+  final List<int> stacks;
+  final List<int> startStacks;
+  late final List<int> _deck;
+  int _next = 0;
+  late final List<List<int>> holes;
+  final List<int> board = <int>[];
+
+  /// Chips each seat has put in on the current street.
+  final List<int> committed = <int>[0, 0];
+  final List<bool> _acted = <bool>[false, false];
+  int pot = 0;
+  int toAct = 0;
+  int lastRaise = 0;
+  PokerStreet street = PokerStreet.preflop;
+
+  /// 0 = you, 1 = opponent, -1 = split. Set when the hand ends.
+  int? winner;
+  bool endedByFold = false;
+
+  int _deal() => _deck[_next++];
+
+  void _post(int seat, int amount) {
+    final a = math.min(amount, stacks[seat]);
+    stacks[seat] -= a;
+    committed[seat] += a;
+    pot += a;
+  }
+
+  bool get over => street == PokerStreet.done;
+  int net(int seat) => stacks[seat] - startStacks[seat];
+  int toCall(int seat) => math.max(0, committed[1 - seat] - committed[seat]);
+  int callAmount(int seat) => math.min(toCall(seat), stacks[seat]);
+  bool canRaise(int seat) => stacks[seat] > toCall(seat) && stacks[1 - seat] > 0;
+  int maxRaiseTo(int seat) => committed[seat] + stacks[seat];
+  int minRaiseTo(int seat) => math.min(committed[1 - seat] + math.max(lastRaise, bigBlind), maxRaiseTo(seat));
+
+  void fold() {
+    if (over) return;
+    _end(1 - toAct, byFold: true);
+  }
+
+  void checkOrCall() {
+    if (over) return;
+    final p = toAct;
+    final amount = callAmount(p);
+    stacks[p] -= amount;
+    committed[p] += amount;
+    pot += amount;
+    if (committed[p] < committed[1 - p]) {
+      // All-in for less: the uncalled part goes back.
+      final extra = committed[1 - p] - committed[p];
+      committed[1 - p] -= extra;
+      stacks[1 - p] += extra;
+      pot -= extra;
+    }
+    _acted[p] = true;
+    _advance();
+  }
+
+  void raiseTo(int total) {
+    if (over || !canRaise(toAct)) {
+      checkOrCall();
+      return;
+    }
+    final p = toAct;
+    final target = total.clamp(minRaiseTo(p), maxRaiseTo(p));
+    final size = target - committed[1 - p];
+    if (size > lastRaise) lastRaise = size;
+    final add = target - committed[p];
+    stacks[p] -= add;
+    committed[p] = target;
+    pot += add;
+    _acted[p] = true;
+    _acted[1 - p] = false;
+    toAct = 1 - p;
+  }
+
+  bool _streetComplete() {
+    if (committed[0] != committed[1] && stacks[0] > 0 && stacks[1] > 0) return false;
+    for (var p = 0; p < 2; p++) {
+      if (stacks[p] == 0 || _acted[p]) continue;
+      if (stacks[1 - p] == 0 && committed[p] >= committed[1 - p]) continue;
+      return false;
+    }
+    return true;
+  }
+
+  void _advance() {
+    if (_streetComplete()) {
+      _nextStreet();
+    } else {
+      toAct = 1 - toAct;
+    }
+  }
+
+  void _nextStreet() {
+    committed[0] = 0;
+    committed[1] = 0;
+    _acted[0] = false;
+    _acted[1] = false;
+    lastRaise = bigBlind;
+    if (street == PokerStreet.river) {
+      _showdown();
+      return;
+    }
+    street = PokerStreet.values[street.index + 1];
+    if (street == PokerStreet.flop) {
+      board.addAll(<int>[_deal(), _deal(), _deal()]);
+    } else {
+      board.add(_deal());
+    }
+    toAct = 1 - button;
+    if (stacks[0] == 0 || stacks[1] == 0) _nextStreet(); // nobody can bet: run it out
+  }
+
+  int score(int seat) => Poker.evaluate(<int>[...holes[seat], ...board]);
+
+  void _showdown() {
+    final a = score(0);
+    final b = score(1);
+    _end(a > b ? 0 : (b > a ? 1 : -1), byFold: false);
+  }
+
+  void _end(int w, {required bool byFold}) {
+    winner = w;
+    endedByFold = byFold;
+    if (w == -1) {
+      final half = pot ~/ 2;
+      stacks[button] += half;
+      stacks[1 - button] += pot - half;
+    } else {
+      stacks[w] += pot;
+    }
+    street = PokerStreet.done;
+  }
+}
+
+enum PokerAct { fold, check, call, raise }
+
+class BotChoice {
+  const BotChoice(this.act, this.equity, {this.raiseTo = 0, this.bluff = false});
+  final PokerAct act;
+  final double equity;
+  final int raiseTo;
+  final bool bluff;
+}
+
+/// A table opponent with a playing style, a baseline and tells.
+class PokerBot {
+  const PokerBot({
+    required this.name,
+    required this.emoji,
+    required this.style,
+    required this.blurb,
+    required this.tight,
+    required this.aggression,
+    required this.bluff,
+    required this.baseline,
+    required this.strongTell,
+    required this.bluffTell,
+    required this.tellMeaning,
+    this.pronoun = 'he',
+  });
+
+  final String pronoun;
+
+  final String name;
+  final String emoji;
+  final String style;
+  final String blurb;
+
+  /// Extra equity this bot wants before calling.
+  final double tight;
+  final double aggression;
+  final double bluff;
+  final String baseline;
+  final String strongTell;
+  final String bluffTell;
+  final String tellMeaning;
+
+  static const double tellReliability = 0.8;
+
+  static const List<PokerBot> all = <PokerBot>[
+    PokerBot(
+      name: 'Rex',
+      emoji: '🗿',
+      style: 'Tight & honest',
+      blurb: 'Plays few hands and rarely bluffs. When he bets big, believe him.',
+      tight: 0.08,
+      aggression: 0.45,
+      bluff: 0.05,
+      baseline: 'sits still with his arms folded',
+      strongTell: 'reaches for his chips before it\'s his turn',
+      bluffTell: 'rubs the back of his neck',
+      tellMeaning: 'Rex reaching for chips early meant a strong hand; neck rubbing (pacifying) meant he was nervous about a bluff.',
+    ),
+    PokerBot(
+      name: 'Lola',
+      emoji: '💃',
+      style: 'Loose & chatty',
+      blurb: 'Plays lots of hands and bluffs often. She talks nonstop, until she doesn\'t.',
+      pronoun: 'she',
+      tight: -0.04,
+      aggression: 0.7,
+      bluff: 0.25,
+      baseline: 'chats nonstop about her weekend',
+      strongTell: 'laughs and talks even more',
+      bluffTell: 'suddenly goes quiet and stares at the table',
+      tellMeaning: 'Lola going quiet was a break from her chatty baseline: bluffing. Extra chatter meant she was comfortable and strong.',
+    ),
+    PokerBot(
+      name: 'Vic',
+      emoji: '🎭',
+      style: 'The actor',
+      blurb: 'Acts weak when he\'s strong and strong when he\'s weak. Learn to flip it.',
+      tight: 0.02,
+      aggression: 0.6,
+      bluff: 0.18,
+      baseline: 'watches the board with a calm, blank face',
+      strongTell: 'sighs and shrugs like he\'s disappointed',
+      bluffTell: 'stares you down and slams his chips in',
+      tellMeaning: 'Vic acts the opposite of his hand: the sigh and shrug meant strong; the stare-down meant a bluff. "Strong means weak, weak means strong."',
+    ),
+  ];
+
+  /// What the bot does at the table this action: its baseline, or a tell.
+  String behavior({required bool strong, required bool bluffing, required math.Random rng}) {
+    if (strong && rng.nextDouble() < tellReliability) return strongTell;
+    if (bluffing && rng.nextDouble() < tellReliability) return bluffTell;
+    if (!strong && !bluffing && rng.nextDouble() < 0.06) return rng.nextBool() ? strongTell : bluffTell;
+    return baseline;
+  }
+
+  BotChoice decide(HoldemHand h, math.Random rng) {
+    const me = 1;
+    final e = Poker.equity(h.holes[me], h.board, rng, trials: 250);
+    final toCall = h.toCall(me);
+    int sized(double fraction) => h.committed[1 - me] + math.max(h.bigBlind, ((fraction * (h.pot + toCall)) / 5).round() * 5);
+    if (toCall == 0) {
+      if (h.canRaise(me) && e > 0.68 - aggression * 0.1 && rng.nextDouble() < 0.45 + aggression * 0.5) {
+        return BotChoice(PokerAct.raise, e, raiseTo: sized(0.6));
+      }
+      if (h.canRaise(me) && h.street != PokerStreet.preflop && e < 0.4 && rng.nextDouble() < bluff) {
+        return BotChoice(PokerAct.raise, e, raiseTo: sized(0.55), bluff: true);
+      }
+      return BotChoice(PokerAct.check, e);
+    }
+    final needed = toCall / (h.pot + toCall);
+    if (h.canRaise(me) && e > 0.8 - aggression * 0.05 && rng.nextDouble() < aggression) {
+      return BotChoice(PokerAct.raise, e, raiseTo: sized(0.8));
+    }
+    if (e >= needed + tight) return BotChoice(PokerAct.call, e);
+    if (h.canRaise(me) && e < 0.4 && rng.nextDouble() < bluff * 0.4) {
+      return BotChoice(PokerAct.raise, e, raiseTo: sized(0.7), bluff: true);
+    }
+    return BotChoice(PokerAct.fold, e);
+  }
+}
+
+enum PokerDrill {
+  handName('Name That Hand', 'Find the best 5-card hand in 7 cards.', '🏷️'),
+  winner('Who Wins?', 'Two hands, one board. Who takes the pot?', '⚔️'),
+  preflop('Play or Fold?', 'Which starting hands are worth playing?', '🚦'),
+  outs('Count the Outs', 'How many cards complete your draw?', '🎯'),
+  odds('Call or Fold?', 'Outs vs. pot odds: the math of a call.', '🧮');
+
+  const PokerDrill(this.title, this.subtitle, this.emoji);
+  final String title;
+  final String subtitle;
+  final String emoji;
+
+  static const int length = 10;
+}
+
+class PokerQuestion {
+  const PokerQuestion({
+    required this.prompt,
+    required this.options,
+    required this.correct,
+    required this.explain,
+    this.yours = const <int>[],
+    this.theirs = const <int>[],
+    this.board = const <int>[],
+  });
+
+  final String prompt;
+  final List<int> yours;
+  final List<int> theirs;
+  final List<int> board;
+  final List<String> options;
+  final int correct;
+  final String explain;
+
+  static List<int> _deal(math.Random rng, int n) => (List<int>.generate(52, (i) => i)..shuffle(rng)).take(n).toList();
+
+  static PokerQuestion make(PokerDrill drill, math.Random rng) => switch (drill) {
+        PokerDrill.handName => _handName(rng),
+        PokerDrill.winner => _winner(rng),
+        PokerDrill.preflop => _preflop(rng),
+        PokerDrill.outs => _outs(rng),
+        PokerDrill.odds => _odds(rng),
+      };
+
+  static PokerQuestion _handName(math.Random rng) {
+    final target = rng.nextInt(8);
+    var cards = _deal(rng, 7);
+    for (var i = 0; i < 6000 && Poker.categoryOf(Poker.evaluate(cards)) != target; i++) {
+      cards = _deal(rng, 7);
+    }
+    final score = Poker.evaluate(cards);
+    final cat = Poker.categoryOf(score);
+    final others = <int>[
+      for (var c = 0; c < 8; c++)
+        if (c != cat) c,
+    ]..sort((a, b) => (a - cat).abs().compareTo((b - cat).abs()));
+    final picks = <int>[cat, ...others.take(3)]..shuffle(rng);
+    return PokerQuestion(
+      prompt: 'What\'s your best hand? (Your 2 cards plus the board.)',
+      yours: cards.sublist(0, 2),
+      board: cards.sublist(2),
+      options: <String>[for (final c in picks) Poker.categories[c]],
+      correct: picks.indexOf(cat),
+      explain: 'Best five cards: ${Poker.describe(score)}.',
+    );
+  }
+
+  static PokerQuestion _winner(math.Random rng) {
+    var cards = _deal(rng, 9);
+    for (var i = 0; i < 60; i++) {
+      final a = Poker.categoryOf(Poker.evaluate(<int>[...cards.sublist(0, 2), ...cards.sublist(4)]));
+      final b = Poker.categoryOf(Poker.evaluate(cards.sublist(2)));
+      if ((a - b).abs() <= 1) break;
+      cards = _deal(rng, 9);
+    }
+    final you = cards.sublist(0, 2);
+    final them = cards.sublist(2, 4);
+    final board = cards.sublist(4);
+    final a = Poker.evaluate(<int>[...you, ...board]);
+    final b = Poker.evaluate(<int>[...them, ...board]);
+    final sameType = Poker.categoryOf(a) == Poker.categoryOf(b);
+    return PokerQuestion(
+      prompt: 'Who wins the pot?',
+      yours: you,
+      theirs: them,
+      board: board,
+      options: const <String>['You win', 'They win', 'Split pot'],
+      correct: a > b ? 0 : (b > a ? 1 : 2),
+      explain: 'You: ${Poker.describe(a)}. Them: ${Poker.describe(b)}.'
+          '${sameType && a != b ? ' Same type of hand, so the higher cards (the kickers) decide.' : ''}'
+          '${a == b ? ' The best five cards are equal, so the pot is split.' : ''}',
+    );
+  }
+
+  static PokerQuestion _preflop(math.Random rng) {
+    final late = rng.nextBool();
+    final want = rng.nextBool();
+    var cards = _deal(rng, 2);
+    for (var i = 0; i < 500 && Poker.playable(cards[0], cards[1], late: late) != want; i++) {
+      cards = _deal(rng, 2);
+    }
+    final play = Poker.playable(cards[0], cards[1], late: late);
+    return PokerQuestion(
+      prompt: late
+          ? 'You\'re on the button: you act last after the flop. Play this hand?'
+          : 'You\'re first to act at a full table. Play this hand?',
+      yours: cards,
+      options: const <String>['Play it', 'Fold it'],
+      correct: play ? 0 : 1,
+      explain: Poker.preflopTip(cards[0], cards[1], late: late),
+    );
+  }
+
+  static PokerQuestion _outs(math.Random rng) {
+    const targets = <int>[4, 8, 9, 15];
+    final target = targets[rng.nextInt(targets.length)];
+    var cards = _deal(rng, 5);
+    var outs = (0, 0);
+    for (var i = 0; i < 20000; i++) {
+      cards = _deal(rng, 5);
+      if (Poker.categoryOf(Poker.evaluate(cards)) > 1) continue;
+      outs = Poker.drawOuts(cards);
+      if (outs.$1 + outs.$2 == target) break;
+    }
+    while (outs.$1 + outs.$2 == 0) {
+      cards = _deal(rng, 5);
+      if (Poker.categoryOf(Poker.evaluate(cards)) > 1) continue;
+      outs = Poker.drawOuts(cards);
+    }
+    final total = outs.$1 + outs.$2;
+    final pool = <int>{total, 2, 4, 6, 8, 9, 12, 15}.toList()..remove(total);
+    pool.sort((a, b) => (a - total).abs().compareTo((b - total).abs()));
+    final options = <int>[total, ...pool.take(3)]..shuffle(rng);
+    final parts = <String>[
+      if (outs.$1 > 0) '${outs.$1} make a flush',
+      if (outs.$2 > 0) '${outs.$2} make a straight',
+    ];
+    return PokerQuestion(
+      prompt: 'You\'re on the flop. How many cards make you a straight or better?',
+      yours: cards.sublist(0, 2),
+      board: cards.sublist(2),
+      options: <String>[for (final o in options) '$o outs'],
+      correct: options.indexOf(total),
+      explain: '${parts.join(' and ')}: $total outs. Rule of 4 and 2: about ${total * 4}% to hit by the river, '
+          '${total * 2}% on the next card.',
+    );
+  }
+
+  static PokerQuestion _odds(math.Random rng) {
+    const outsChoices = <int>[4, 8, 9, 12, 15];
+    const fractions = <double>[0.33, 0.5, 0.75, 1.0];
+    for (;;) {
+      final outs = outsChoices[rng.nextInt(outsChoices.length)];
+      final allIn = rng.nextBool();
+      final pot = 40 + 10 * rng.nextInt(17);
+      final bet = math.max(10, ((pot * fractions[rng.nextInt(fractions.length)]) / 5).round() * 5);
+      final need = bet / (pot + 2 * bet);
+      final have = math.min(0.6, outs * (allIn ? 4 : 2) / 100);
+      if ((have - need).abs() < 0.04) continue;
+      final call = have > need;
+      return PokerQuestion(
+        prompt: allIn
+            ? 'Flop. The pot is $pot. Your opponent goes all-in for $bet. You have $outs outs. Call or fold?'
+            : 'Turn. The pot is $pot. Your opponent bets $bet. You have $outs outs. Call or fold?',
+        options: const <String>['Call', 'Fold'],
+        correct: call ? 0 : 1,
+        explain: 'You pay $bet to win a pot of ${pot + 2 * bet}, so you need $bet ÷ ${pot + 2 * bet} = '
+            '${(need * 100).round()}%. With $outs outs you have about ${(have * 100).round()}% '
+            '(×${allIn ? 4 : 2}). ${call ? 'You win more often than you need: call.' : 'Too expensive for your draw: fold.'}',
+      );
+    }
+  }
+}
+
+class PokerLesson {
+  const PokerLesson(this.emoji, this.title, this.pages);
+  final String emoji;
+  final String title;
+  final List<LessonPage> pages;
+
+  static const List<PokerLesson> all = <PokerLesson>[
+    PokerLesson('🃏', 'How a Hand Works', <LessonPage>[
+      LessonPage('The goal',
+          'Texas Hold\'em: win chips by having the best 5-card hand at the end, or by getting everyone else to fold. Each player gets 2 private cards. Five shared cards (the board) come out in the middle. Your hand is the best 5 cards out of your 2 plus the 5 on the board.'),
+      LessonPage('Blinds',
+          'Before the cards, two players post forced bets: the small blind and the big blind. They move around the table each hand, so there\'s always something to win.',
+          'Blinds 5/10: the player left of the dealer button puts in 5, the next player puts in 10.'),
+      LessonPage('Four rounds of betting',
+          'Preflop (after your 2 cards), the flop (3 board cards at once), the turn (a 4th card) and the river (the 5th). Each round, everyone still in gets a turn to act.'),
+      LessonPage('Your options',
+          'Check: pass, if nobody has bet. Bet: put chips in. Call: match a bet. Raise: bet more than the current bet. Fold: give up the hand and any chips you put in.',
+          'Someone bets and you have nothing? Fold. Nobody bet and you\'re unsure? Check.'),
+      LessonPage('Showdown',
+          'If more than one player is left after the river, everyone shows their cards. Best 5-card hand wins the pot. Exactly equal hands split it.'),
+    ]),
+    PokerLesson('🏆', 'Hand Rankings', <LessonPage>[
+      LessonPage('The top four',
+          'Royal flush: A-K-Q-J-10 of one suit.\nStraight flush: five in a row, same suit.\nFour of a kind: four cards of one rank.\nFull house: three of a kind plus a pair.',
+          'K♥ K♠ K♦ 4♣ 4♥ is "Kings full of Fours".'),
+      LessonPage('The middle',
+          'Flush: any five of one suit.\nStraight: five in a row, any suits (A-2-3-4-5 counts, and so does 10-J-Q-K-A).\nThree of a kind: three cards of one rank.',
+          'Flush beats straight because it\'s harder to make.'),
+      LessonPage('The bottom',
+          'Two pair: two different pairs.\nPair: two cards of one rank.\nHigh card: nothing, so your highest card plays.'),
+      LessonPage('Ties and kickers',
+          'Same type of hand? Compare the highest cards that are part of it, then the rest (the "kickers"). Only your best five cards count, never a sixth.',
+          'K♠ K♦ A♣ beats K♥ K♣ Q♦: same pair, but the ace kicker wins.'),
+    ]),
+    PokerLesson('🚦', 'Which Hands to Play', <LessonPage>[
+      LessonPage('Fold most hands',
+          'The fastest way to lose is playing too many hands. Good players fold about 3 of every 4 starting hands and wait.'),
+      LessonPage('Strong from anywhere',
+          'Pairs 7-7 and up. A-K and A-Q. A-J and K-Q if they\'re suited (same suit).'),
+      LessonPage('Position is power',
+          'Acting last is a huge edge: you see what everyone else does first. The dealer button acts last after the flop. Play more hands on the button and fewer when you act first.'),
+      LessonPage('Hands to add when you act last',
+          'Small pairs (hoping for three of a kind), suited aces, suited connectors like 8-7 suited, and K-J, Q-J.'),
+    ]),
+    PokerLesson('🎯', 'Outs & Odds', <LessonPage>[
+      LessonPage('Outs',
+          'An out is a card that makes your hand. Four hearts after the flop? There are 13 hearts and you can see 4, so 9 outs.'),
+      LessonPage('Common draws',
+          'Flush draw: 9 outs. Open-ended straight draw (like 7-8-9-10, needing a 6 or a J): 8 outs. Gutshot (like 7-8-10-J, needing a 9): 4 outs. Flush draw plus straight draw: about 15.'),
+      LessonPage('Rule of 4 and 2',
+          'Multiply your outs by 4 on the flop (two cards to come) or by 2 on the turn (one card to come). That\'s your rough chance in percent.',
+          '9 outs on the turn ≈ 18%.'),
+      LessonPage('Pot odds',
+          'Compare the price to your chance. Divide what you have to call by the total pot after you call. If your chance is bigger, call.',
+          'Pot 100, bet 50. You call 50 to win a pot of 200: you need 25%. With 18%, fold.'),
+    ]),
+    PokerLesson('👀', 'Reading Players', <LessonPage>[
+      LessonPage('Baseline first',
+          'Same skill as the Cold Reading course. Watch how each player acts in ordinary hands: how they hold chips, how much they talk, how they bet. A tell only means something as a change from that.'),
+      LessonPage('Classic tells',
+          'Reaching for chips before it\'s their turn often means strong. A chatty player going suddenly quiet can mean a bluff. Shaky hands while betting are usually excitement about a strong hand, not fear.'),
+      LessonPage('Strong means weak',
+          'Many players act the opposite of their hand: they sigh and shrug with a monster, and stare you down when bluffing. Once you know someone does this, their act becomes the tell.'),
+      LessonPage('Betting beats body language',
+          'How someone bets is the most reliable tell: what they do with strong and weak hands, how big they bet, when they slow down. At the table, watch the chips first.'),
+    ]),
+    PokerLesson('🎭', 'Bluffing & Home Games', <LessonPage>[
+      LessonPage('When to bluff',
+          'Bluff against one or two players, not five. Bluff when the board looks scary (three of a suit, four to a straight, a pair) and your betting tells a story that makes sense.'),
+      LessonPage('Who not to bluff',
+          'Players who call everything. Against them, only bet your good hands and let them pay you.'),
+      LessonPage('Keep your sizes the same',
+          'Bet the same size with bluffs and strong hands so your bet size isn\'t a tell. About half to three-quarters of the pot is normal.'),
+      LessonPage('Playing with friends',
+          'Agree on the rules first: blinds, starting chips, when it ends. Play for chips or something fun. Then watch who bluffs a lot and who only bets big hands. That\'s your edge.'),
+    ]),
+  ];
+}
+
+class PokerSchoolScreen extends StatefulWidget {
+  const PokerSchoolScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<PokerSchoolScreen> createState() => _PokerSchoolScreenState();
+}
+
+class _PokerSchoolScreenState extends State<PokerSchoolScreen> {
+  GameState get game => widget.game;
+
+  @override
+  void initState() {
+    super.initState();
+    game.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    game.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _push(Widget screen) {
+    HapticFeedback.selectionClick();
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen));
+  }
+
+  Widget _section(String text) => Padding(
+        padding: const EdgeInsets.fromLTRB(0, 18, 0, 8),
+        child: Text(text,
+            style: const TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+      );
+
+  Widget _tile({required String emoji, required String title, required String subtitle, String? trailing, required VoidCallback onTap}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: Palette.surface,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: <Widget>[
+                Text(emoji, style: const TextStyle(fontSize: 26)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(title, style: const TextStyle(color: Palette.textPrimary, fontSize: 16, fontWeight: FontWeight.w900)),
+                      Text(subtitle, style: const TextStyle(color: Palette.textMuted, fontSize: 13)),
+                    ],
+                  ),
+                ),
+                if (trailing != null)
+                  Text(trailing, style: const TextStyle(color: Palette.gold, fontWeight: FontWeight.w800)),
+                const Icon(Icons.chevron_right, color: Palette.textMuted),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final stats = game.pokerStats;
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                IconButton(
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.arrow_back, color: Palette.textMuted),
+                ),
+                const Expanded(
+                  child: Text('Poker School',
+                      style: TextStyle(color: Palette.textPrimary, fontSize: 23, fontWeight: FontWeight.w900)),
+                ),
+                StatPill(emoji: '💡', label: '${game.insightPoints} IP', color: Palette.blue, tooltip: 'Insight Points'),
+              ],
+            ),
+            const InfoBanner(
+              icon: Icons.school,
+              color: Palette.indigo,
+              text: 'Texas Hold\'em, step by step: read the lessons in order, sharpen the basics in the drills, then '
+                  'take a seat and read your opponent.',
+            ),
+            _section('LESSONS'),
+            for (var i = 0; i < PokerLesson.all.length; i++)
+              _tile(
+                emoji: PokerLesson.all[i].emoji,
+                title: '${i + 1}. ${PokerLesson.all[i].title}',
+                subtitle: '${PokerLesson.all[i].pages.length} short cards',
+                onTap: () => _push(PokerLessonScreen(lesson: PokerLesson.all[i])),
+              ),
+            _section('DRILLS · ${PokerDrill.length} QUESTIONS EACH'),
+            for (final d in PokerDrill.values)
+              _tile(
+                emoji: d.emoji,
+                title: d.title,
+                subtitle: d.subtitle,
+                trailing: game.pokerBest[d.name] == null ? null : 'best ${game.pokerBest[d.name]}/${PokerDrill.length}',
+                onTap: () => _push(PokerDrillScreen(game: game, drill: d)),
+              ),
+            _section('THE TABLE · HEADS-UP, BLINDS 5/10'),
+            for (final bot in PokerBot.all)
+              _tile(
+                emoji: bot.emoji,
+                title: '${bot.name} · ${bot.style}',
+                subtitle: bot.blurb,
+                onTap: () => _push(PokerTableScreen(game: game, bot: bot)),
+              ),
+            if (stats[0] > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Your record: ${stats[0]} hands · won ${stats[1]} · net ${stats[2] >= 0 ? '+' : ''}${stats[2]} IP · '
+                  'biggest pot ${stats[3]}',
+                  style: const TextStyle(color: Palette.textMuted, fontSize: 13),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class PokerLessonScreen extends StatefulWidget {
+  const PokerLessonScreen({super.key, required this.lesson});
+  final PokerLesson lesson;
+
+  @override
+  State<PokerLessonScreen> createState() => _PokerLessonScreenState();
+}
+
+class _PokerLessonScreenState extends State<PokerLessonScreen> {
+  int _page = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final pages = widget.lesson.pages;
+    final page = pages[_page];
+    final last = _page == pages.length - 1;
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  IconButton(
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    icon: const Icon(Icons.close, color: Palette.textMuted),
+                  ),
+                  Expanded(
+                    child: Text('${widget.lesson.emoji} ${widget.lesson.title}',
+                        style: const TextStyle(color: Palette.textPrimary, fontWeight: FontWeight.w900, fontSize: 17)),
+                  ),
+                  Text('${_page + 1}/${pages.length}', style: const TextStyle(color: Palette.textMuted)),
+                ],
+              ),
+              const SizedBox(height: 8),
+              _Bar(value: (_page + 1) / pages.length, color: Palette.indigo),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.only(top: 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      Text(page.title,
+                          style: const TextStyle(color: Palette.textPrimary, fontSize: 26, fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 14),
+                      Text(page.body, style: const TextStyle(color: Palette.textPrimary, fontSize: 17, height: 1.5)),
+                      if (page.example != null) ...<Widget>[
+                        const SizedBox(height: 18),
+                        InfoBanner(icon: Icons.style, color: Palette.gold, text: page.example!),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              Row(
+                children: <Widget>[
+                  if (_page > 0)
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => setState(() => _page--),
+                        child: const Text('BACK', style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800)),
+                      ),
+                    ),
+                  Expanded(
+                    flex: 2,
+                    child: ChunkyButton(
+                      label: last ? 'Done' : 'Next',
+                      color: Palette.indigo,
+                      onPressed: () => last ? Navigator.of(context).pop() : setState(() => _page++),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A row of small cards with a label.
+class _PokerCards extends StatelessWidget {
+  const _PokerCards({required this.label, required this.cards, this.slots = 0, this.hidden = false});
+  final String label;
+  final List<int> cards;
+  final int slots;
+  final bool hidden;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = math.max(cards.length, slots);
+    return Column(
+      children: <Widget>[
+        if (label.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(label,
+                style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.1)),
+          ),
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 6,
+          runSpacing: 6,
+          children: <Widget>[
+            for (var i = 0; i < count; i++)
+              if (i < cards.length)
+                _MiniCard(card: Poker.face(cards[i]), hidden: hidden)
+              else
+                Container(
+                  width: 62,
+                  height: 88,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.white24, width: 2),
+                  ),
+                ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class PokerDrillScreen extends StatefulWidget {
+  const PokerDrillScreen({super.key, required this.game, required this.drill});
+  final GameState game;
+  final PokerDrill drill;
+
+  @override
+  State<PokerDrillScreen> createState() => _PokerDrillScreenState();
+}
+
+class _PokerDrillScreenState extends State<PokerDrillScreen> {
+  final math.Random _rng = math.Random();
+  late PokerQuestion _q = PokerQuestion.make(widget.drill, _rng);
+  int _index = 0;
+  int _score = 0;
+  int? _picked;
+  bool _done = false;
+  bool _newBest = false;
+
+  void _pick(int i) {
+    if (_picked != null) return;
+    final right = i == _q.correct;
+    if (right) {
+      _score++;
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+    setState(() => _picked = i);
+  }
+
+  void _next() {
+    if (_index + 1 >= PokerDrill.length) {
+      _newBest = widget.game.reportPokerDrill(widget.drill.name, _score);
+      setState(() => _done = true);
+      return;
+    }
+    setState(() {
+      _index++;
+      _picked = null;
+      _q = PokerQuestion.make(widget.drill, _rng);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0E3B2E),
+      body: SafeArea(child: _done ? _buildDone() : _buildQuestion()),
+    );
+  }
+
+  Widget _buildDone() {
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: <Widget>[
+          const Spacer(),
+          Text(_newBest ? '🏆' : widget.drill.emoji, style: const TextStyle(fontSize: 64)),
+          const SizedBox(height: 10),
+          Text('$_score / ${PokerDrill.length}',
+              style: const TextStyle(color: Colors.white, fontSize: 34, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 6),
+          Text(
+            '${_newBest ? 'New best! ' : ''}+${_score * GameState.pokerDrillIp} IP',
+            style: const TextStyle(color: Palette.gold, fontSize: 17, fontWeight: FontWeight.w800),
+          ),
+          const Spacer(),
+          ChunkyButton(label: 'Done', color: Palette.gold, textColor: const Color(0xFF1A1A1A), onPressed: () => Navigator.of(context).pop()),
+          TextButton(
+            onPressed: () => setState(() {
+              _index = 0;
+              _score = 0;
+              _picked = null;
+              _done = false;
+              _newBest = false;
+              _q = PokerQuestion.make(widget.drill, _rng);
+            }),
+            child: const Text('AGAIN', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuestion() {
+    final q = _q;
+    final answered = _picked != null;
+    return Column(
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 4, 16, 0),
+          child: Row(
+            children: <Widget>[
+              IconButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+                icon: const Icon(Icons.close, color: Colors.white70),
+              ),
+              Expanded(
+                child: Text(widget.drill.title.toUpperCase(),
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
+              ),
+              Text('${_index + 1}/${PokerDrill.length} · $_score ✓',
+                  style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w800)),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            children: <Widget>[
+              Text(q.prompt,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800, height: 1.35)),
+              const SizedBox(height: 16),
+              if (q.theirs.isNotEmpty) ...<Widget>[
+                _PokerCards(label: 'THEIR CARDS', cards: q.theirs),
+                const SizedBox(height: 14),
+              ],
+              if (q.board.isNotEmpty) ...<Widget>[
+                _PokerCards(label: 'BOARD', cards: q.board),
+                const SizedBox(height: 14),
+              ],
+              if (q.yours.isNotEmpty) _PokerCards(label: 'YOUR CARDS', cards: q.yours),
+              const SizedBox(height: 18),
+              for (var i = 0; i < q.options.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: OutlinedButton(
+                    onPressed: answered ? null : () => _pick(i),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(50),
+                      backgroundColor: !answered
+                          ? Colors.black26
+                          : (i == q.correct
+                              ? Palette.green.withAlpha(90)
+                              : (i == _picked ? Palette.red.withAlpha(90) : Colors.black12)),
+                      side: BorderSide(color: answered && i == q.correct ? Palette.green : Colors.white30, width: 1.5),
+                    ),
+                    child: Text(q.options[i],
+                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+                  ),
+                ),
+              if (answered) ...<Widget>[
+                const SizedBox(height: 6),
+                InfoBanner(
+                  icon: _picked == q.correct ? Icons.check_circle : Icons.cancel,
+                  color: _picked == q.correct ? Palette.green : Palette.orange,
+                  text: q.explain,
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (answered)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: ChunkyButton(
+              label: _index + 1 >= PokerDrill.length ? 'See score' : 'Next',
+              color: Palette.gold,
+              textColor: const Color(0xFF1A1A1A),
+              onPressed: _next,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class PokerTableScreen extends StatefulWidget {
+  const PokerTableScreen({super.key, required this.game, required this.bot});
+  final GameState game;
+  final PokerBot bot;
+
+  @override
+  State<PokerTableScreen> createState() => _PokerTableScreenState();
+}
+
+class _PokerTableScreenState extends State<PokerTableScreen> {
+  static const int maxStack = 500;
+  static const int botBuyIn = 500;
+
+  final math.Random _rng = math.Random();
+  HoldemHand? _hand;
+  int _botStack = botBuyIn;
+  int _button = 1;
+  bool _busy = false;
+  bool _coach = true;
+  double? _equity;
+  String _message = '';
+  String _behavior = '';
+  final List<(String, double, bool)> _tellsShown = <(String, double, bool)>[];
+  String _review = '';
+
+  GameState get game => widget.game;
+  PokerBot get bot => widget.bot;
+
+  int get _playerStack => math.min(game.insightPoints, maxStack);
+  bool get _canDeal => (_hand == null || _hand!.over) && !_busy && _playerStack >= 20;
+
+  @override
+  void initState() {
+    super.initState();
+    _behavior = bot.baseline;
+    _message = 'Blinds 5/10. You bring up to $maxStack IP to the table; whatever you win or lose comes out of your IP.';
+  }
+
+  void _deal() {
+    if (!_canDeal) return;
+    var note = '';
+    if (_botStack < 100) {
+      _botStack = botBuyIn;
+      note = '${bot.name} buys back in. ';
+    }
+    _button = 1 - _button;
+    final hand = HoldemHand(stacks: <int>[_playerStack, _botStack], button: _button, rng: _rng);
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _hand = hand;
+      _tellsShown.clear();
+      _review = '';
+      _behavior = bot.baseline;
+      _message = note +
+          (_button == 0
+              ? 'You have the button: you post 5 and act first now, last after the flop.'
+              : '${bot.name} has the button. You post the 10 big blind.');
+    });
+    _afterAction();
+  }
+
+  String _streetName(PokerStreet s) => switch (s) {
+        PokerStreet.preflop => 'Preflop',
+        PokerStreet.flop => 'The flop',
+        PokerStreet.turn => 'The turn',
+        PokerStreet.river => 'The river',
+        PokerStreet.done => 'Showdown',
+      };
+
+  Future<void> _afterAction() async {
+    final h = _hand!;
+    while (!h.over && h.toAct == 1) {
+      setState(() {
+        _busy = true;
+        _equity = null;
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+      if (!mounted) return;
+      final before = h.street;
+      final toCall = h.toCall(1);
+      final choice = bot.decide(h, _rng);
+      final shown = bot.behavior(strong: choice.equity >= 0.7, bluffing: choice.bluff, rng: _rng);
+      if (shown != bot.baseline) _tellsShown.add((shown, choice.equity, choice.bluff));
+      String verb;
+      switch (choice.act) {
+        case PokerAct.fold:
+          verb = 'folds';
+          h.fold();
+        case PokerAct.check:
+          verb = 'checks';
+          h.checkOrCall();
+        case PokerAct.call:
+          verb = 'calls ${h.callAmount(1)}';
+          h.checkOrCall();
+        case PokerAct.raise:
+          h.raiseTo(choice.raiseTo);
+          final total = h.committed[1];
+          verb = h.stacks[1] == 0 ? 'goes ALL-IN ($total)' : (toCall == 0 ? 'bets $total' : 'raises to $total');
+      }
+      setState(() {
+        _behavior = shown;
+        _message = '${bot.name} $verb.${!h.over && h.street != before ? ' ${_streetName(h.street)}.' : ''}';
+      });
+    }
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (h.over) {
+      _finish();
+    } else {
+      final e = Poker.equity(h.holes[0], h.board, _rng, trials: 400);
+      setState(() => _equity = e);
+    }
+  }
+
+  void _playerAct(PokerAct act, [int raiseTo = 0]) {
+    final h = _hand;
+    if (h == null || h.over || h.toAct != 0 || _busy) return;
+    HapticFeedback.selectionClick();
+    final before = h.street;
+    final toCall = h.toCall(0);
+    String text;
+    switch (act) {
+      case PokerAct.fold:
+        text = 'You fold.';
+        h.fold();
+      case PokerAct.check:
+      case PokerAct.call:
+        text = toCall == 0 ? 'You check.' : 'You call ${h.callAmount(0)}.';
+        h.checkOrCall();
+      case PokerAct.raise:
+        h.raiseTo(raiseTo);
+        text = h.stacks[0] == 0
+            ? 'You go all-in.'
+            : (toCall == 0 ? 'You bet ${h.committed[0]}.' : 'You raise to ${h.committed[0]}.');
+    }
+    setState(() {
+      _equity = null;
+      _message = '$text${!h.over && h.street != before ? ' ${_streetName(h.street)}.' : ''}';
+    });
+    _afterAction();
+  }
+
+  void _finish() {
+    final h = _hand!;
+    final net = h.net(0);
+    _botStack = h.stacks[1];
+    game.settlePoker(net: net, won: h.winner == 0, pot: h.pot);
+    final String result;
+    if (h.endedByFold) {
+      result = h.winner == 0 ? '${bot.name} folds. You win ${h.pot}.' : 'You fold. ${bot.name} wins ${h.pot}.';
+    } else {
+      final you = Poker.describe(h.score(0));
+      final them = Poker.describe(h.score(1));
+      result = switch (h.winner) {
+        0 => 'You win ${h.pot} with $you. ${bot.name} had $them.',
+        1 => '${bot.name} wins ${h.pot} with $them. You had $you.',
+        _ => 'Split pot: you both have $you.',
+      };
+    }
+    final reviews = <String>[
+      for (final t in _tellsShown)
+        '"${t.$1}" → ${t.$3 ? '${bot.pronoun} was bluffing' : (t.$2 >= 0.7 ? '${bot.pronoun} was strong' : 'a false alarm, nothing behind it')}',
+    ];
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _message = '$result ${net > 0 ? '+$net' : '$net'} IP.';
+      _review = reviews.isEmpty ? '' : 'Tell check: ${reviews.join(' · ')}. ${bot.tellMeaning}';
+    });
+  }
+
+  String _coachText(HoldemHand h, double e) {
+    final made = h.board.isEmpty
+        ? Poker.startingName(h.holes[0][0], h.holes[0][1])
+        : Poker.describe(Poker.evaluate(<int>[...h.holes[0], ...h.board]));
+    final pct = (e * 100).round();
+    final toCall = h.toCall(0);
+    final chart = h.board.isEmpty
+        ? (Poker.playable(h.holes[0][0], h.holes[0][1], late: h.button == 0)
+            ? ' Starting-hand chart: play it.'
+            : ' Starting-hand chart: a fold.')
+        : '';
+    if (toCall == 0) {
+      final advice = e >= 0.65 ? 'bet for value' : (e >= 0.5 ? 'check, or bet small' : 'check');
+      return '$made. You beat a random hand about $pct% of the time. Coach: $advice.$chart';
+    }
+    final need = (100 * toCall / (h.pot + toCall)).round();
+    final advice = e >= 0.75 ? 'raise' : (pct >= need ? 'call' : 'fold');
+    return '$made. About $pct% vs a random hand; calling $toCall needs $need%. Coach: $advice.$chart';
+  }
+
+  int _sized(HoldemHand h, double fraction) {
+    final toCall = h.toCall(0);
+    final raw = h.committed[1] + ((fraction * (h.pot + toCall)) / 5).round() * 5;
+    return raw.clamp(h.minRaiseTo(0), h.maxRaiseTo(0));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final h = _hand;
+    final inHand = h != null && !h.over;
+    return PopScope<Object?>(
+      canPop: !inHand && !_busy,
+      onPopInvokedWithResult: (bool didPop, Object? result) {
+        if (!didPop) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(const SnackBar(
+              backgroundColor: Palette.surfaceHigh,
+              content: Text('Finish the hand first (or fold).', style: TextStyle(color: Palette.textPrimary)),
+            ));
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0E3B2E),
+        body: SafeArea(
+          child: Column(
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 4, 12, 0),
+                child: Row(
+                  children: <Widget>[
+                    IconButton(
+                      onPressed: () => Navigator.of(context).maybePop(),
+                      icon: const Icon(Icons.close, color: Colors.white70),
+                    ),
+                    Expanded(
+                      child: Text('HOLD\'EM VS ${bot.name.toUpperCase()}',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
+                    ),
+                    StatPill(emoji: '💡', label: '${game.insightPoints} IP', color: Palette.gold, tooltip: 'Your bankroll'),
+                  ],
+                ),
+              ),
+              Expanded(child: _buildTable(h)),
+              _buildControls(h),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTable(HoldemHand? h) {
+    final showBot = h != null && h.over;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Text(bot.emoji, style: const TextStyle(fontSize: 34)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text('${bot.name} · ${h?.stacks[1] ?? _botStack} chips${h != null && h.button == 1 ? ' · button' : ''}',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
+                  Text('${bot.name} $_behavior',
+                      style: const TextStyle(color: Palette.highlight, fontStyle: FontStyle.italic, fontSize: 13.5)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (h != null)
+          _PokerCards(
+            label: showBot ? '${bot.name.toUpperCase()}\'S CARDS${h.endedByFold ? ' (training peek)' : ''}' : '',
+            cards: h.holes[1],
+            hidden: !showBot,
+          ),
+        const SizedBox(height: 14),
+        _PokerCards(label: 'BOARD', cards: h?.board ?? const <int>[], slots: 5),
+        const SizedBox(height: 8),
+        Text(
+          h == null ? '' : 'POT ${h.pot}${!h.over && (h.committed[0] + h.committed[1]) > 0 ? '  ·  this round: you ${h.committed[0]}, ${bot.name} ${h.committed[1]}' : ''}',
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, letterSpacing: 1),
+        ),
+        const SizedBox(height: 10),
+        if (_message.isNotEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+            decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(12)),
+            child: Text(_message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontSize: 15.5, fontWeight: FontWeight.w800, height: 1.35)),
+          ),
+        if (_review.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 8),
+          InfoBanner(icon: Icons.visibility, color: Palette.highlight, text: _review),
+        ],
+        const SizedBox(height: 12),
+        if (h != null) _PokerCards(label: 'YOUR CARDS · ${h.stacks[0]} chips${h.button == 0 ? ' · button' : ''}', cards: h.holes[0]),
+        if (h != null && !h.over && h.toAct == 0 && _coach && _equity != null) ...<Widget>[
+          const SizedBox(height: 10),
+          InfoBanner(icon: Icons.school, color: Palette.gold, text: _coachText(h, _equity!)),
+        ],
+        if (h == null || h.over) ...<Widget>[
+          const SizedBox(height: 10),
+          Text(
+            'Watch ${bot.name}\'s baseline: "${bot.baseline}". When that changes, ask yourself why. '
+            'After each hand you\'ll see what any tell really meant.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white60, fontSize: 12.5, height: 1.35),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildControls(HoldemHand? h) {
+    final Widget actions;
+    if (h != null && !h.over) {
+      final myTurn = h.toAct == 0 && !_busy;
+      final toCall = h.toCall(0);
+      final canRaise = myTurn && h.canRaise(0);
+      final half = _sized(h, 0.5);
+      final pot = _sized(h, 1.0);
+      final word = toCall == 0 ? 'Bet' : 'Raise to';
+      actions = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: ChunkyButton(
+                  label: 'Fold',
+                  color: Palette.red,
+                  height: 48,
+                  onPressed: myTurn && toCall > 0 ? () => _playerAct(PokerAct.fold) : null,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ChunkyButton(
+                  label: toCall == 0 ? 'Check' : 'Call ${h.callAmount(0)}',
+                  color: Palette.green,
+                  height: 48,
+                  onPressed: myTurn ? () => _playerAct(PokerAct.call) : null,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: <Widget>[
+              for (final (label, amount) in <(String, int)>[
+                ('$word $half', half),
+                if (pot != half) ('$word $pot', pot),
+                ('All-in ${h.maxRaiseTo(0)}', h.maxRaiseTo(0)),
+              ]) ...<Widget>[
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: canRaise ? () => _playerAct(PokerAct.raise, amount) : null,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: Colors.white38),
+                      minimumSize: const Size.fromHeight(44),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                    ),
+                    child: FittedBox(child: Text(label)),
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+            ],
+          ),
+        ],
+      );
+    } else {
+      actions = ChunkyButton(
+        label: _playerStack >= 20 ? (h == null ? 'Deal' : 'Next hand') : 'Not enough IP (need 20)',
+        color: Palette.gold,
+        textColor: const Color(0xFF1A1A1A),
+        onPressed: _canDeal ? _deal : null,
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      color: const Color(0xFF0A2C22),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          SwitchListTile(
+            dense: true,
+            value: _coach,
+            onChanged: (v) => setState(() => _coach = v),
+            title: const Text('Coach (hand strength, odds, advice)', style: TextStyle(color: Colors.white)),
+          ),
+          actions,
         ],
       ),
     );
