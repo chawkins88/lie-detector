@@ -104,4 +104,28 @@ void main() {
     expect(g.ratingLog, isNotEmpty);
     g.dispose();
   });
+
+  test('real-life clues and confidence are tracked, saved and turned into advice', () {
+    final a = GameState(missionsOn: false);
+    for (var i = 0; i < 4; i++) {
+      a.recordRealLife('Sam', correct: i != 0, clue: LieClue.checkable, confidence: 2);
+      a.recordRealLife('Sam', correct: i == 0, clue: LieClue.body, confidence: 0);
+    }
+    a.recordRealLife('Jo', correct: true); // older-style round, no clue
+    expect(a.clueStats[LieClue.checkable], <int>[4, 3]);
+    expect(a.clueStats[LieClue.body], <int>[4, 1]);
+    expect(a.confidenceStats[2], <int>[4, 3]);
+    final advice = RealLifeInsights.takeaway(a)!;
+    expect(advice, contains('Checkable facts'));
+    expect(advice, contains('body language'));
+
+    final saved = jsonDecode(jsonEncode(a.toJson())) as Map<String, dynamic>;
+    a.dispose();
+    final b = GameState()..restoreFrom(saved);
+    expect(b.clueStats[LieClue.checkable], <int>[4, 3]);
+    expect(b.confidenceStats[0], <int>[4, 1]);
+    expect(b.realLifeStats['Sam'], <int>[8, 4]);
+    expect(RealLifeInsights.takeaway(GameState()), isNull);
+    b.dispose();
+  });
 }

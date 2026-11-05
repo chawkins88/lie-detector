@@ -59,7 +59,11 @@ A third tab for extra reps that never cost hearts:
 
 - **The Consultant**: interview three suspects, switch between them, and get the guilty one to confess.
   Small talk, open story, reverse order, detail, unexpected questions and evidence build the case; pressure backfires.
-- **Two Truths & a Lie**: a real-life mode for playing with friends that tracks how often you catch the lie.
+- **Two Truths & a Lie**: a real-life trainer for playing with friends. Question cards tell you what
+  to ask (checkable details, unexpected questions, telling it backwards, holding back what you know).
+  Before the reveal you log what gave it away and how sure you were, so the app can show which clues
+  actually work for you and whether your confidence means anything.
+- **What Actually Works**: a short, research-based guide to catching real lies (and the myths).
 - **Your progress**: daily accuracy for the last two weeks, this week vs. last.
 - **Baseline Lab**: endless, freshly generated baseline cases with a best streak.
 - **Speed Round**: 90 seconds across every unlocked level.

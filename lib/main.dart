@@ -2473,8 +2473,27 @@ class GameState extends ChangeNotifier {
     _changed();
   }
 
-  void recordRealLife(String friend, {required bool correct}) {
+  /// Real-life rounds by the clue you went on: clue → [rounds, caught].
+  final Map<LieClue, List<int>> clueStats = <LieClue, List<int>>{};
+
+  /// Real-life rounds by how sure you were (0 guessing, 1 fairly sure, 2 certain).
+  final List<List<int>> confidenceStats = <List<int>>[
+    <int>[0, 0],
+    <int>[0, 0],
+    <int>[0, 0],
+  ];
+
+  void recordRealLife(String friend, {required bool correct, LieClue? clue, int? confidence}) {
     final s = realLifeStats.putIfAbsent(friend, () => <int>[0, 0]);
+    if (clue != null) {
+      final c = clueStats.putIfAbsent(clue, () => <int>[0, 0]);
+      c[0]++;
+      if (correct) c[1]++;
+    }
+    if (confidence != null && confidence >= 0 && confidence < 3) {
+      confidenceStats[confidence][0]++;
+      if (correct) confidenceStats[confidence][1]++;
+    }
     s[0]++;
     if (correct) {
       s[1]++;
@@ -2949,6 +2968,8 @@ class GameState extends ChangeNotifier {
         'dayLog': <String, List<int>>{for (final e in dayLog.entries) '${e.key}': e.value},
         'caseStars': caseStars,
         'realLife': realLifeStats,
+        'clues': <String, List<int>>{for (final e in clueStats.entries) e.key.name: e.value},
+        'confidence': confidenceStats,
         'blackjack': blackjackStats,
         'rating': rating,
         'peakRating': peakRating,
@@ -3041,6 +3062,25 @@ class GameState extends ChangeNotifier {
       final hadBadges = ach is List;
       if (ach is List) achievements.addAll(ach.whereType<String>());
       _introBadges = !hadBadges && totalAnswered > 0;
+      final clues = data['clues'];
+      if (clues is Map) {
+        final byName = LieClue.values.asNameMap();
+        clues.forEach((Object? k, Object? v) {
+          final clue = byName[k];
+          if (clue != null && v is List && v.length == 2 && v[0] is int && v[1] is int) {
+            clueStats[clue] = <int>[v[0] as int, v[1] as int];
+          }
+        });
+      }
+      final conf = data['confidence'];
+      if (conf is List && conf.length == 3) {
+        for (var i = 0; i < 3; i++) {
+          final v = conf[i];
+          if (v is List && v.length == 2 && v[0] is int && v[1] is int) {
+            confidenceStats[i] = <int>[v[0] as int, v[1] as int];
+          }
+        }
+      }
       final real = data['realLife'];
       if (real is Map) {
         real.forEach((Object? k, Object? v) {
@@ -9310,6 +9350,16 @@ class _PracticeHubScreenState extends State<PracticeHubScreen> {
                 MaterialPageRoute<void>(builder: (_) => RealLifeScreen(game: game)),
               ),
             ),
+            _BigModeCard(
+              emoji: '🔬',
+              title: 'What Actually Works',
+              subtitle: 'What the research says about catching real lies, and what\'s a myth.',
+              status: '8 short cards · 2 min read',
+              color: Palette.teal,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const LieScienceScreen()),
+              ),
+            ),
             Container(
               margin: const EdgeInsets.only(bottom: 12),
               padding: const EdgeInsets.all(14),
@@ -12116,6 +12166,53 @@ class _TranscriptLine extends StatelessWidget {
 //  REAL LIFE: Two Truths and a Lie with friends
 // ════════════════════════════════════════════════════════════════════════════
 
+/// What you went on when you made a real-life guess.
+enum LieClue {
+  detail('Detail level', 'Rich vs. thin and vague', '🔬', true),
+  checkable('Checkable facts', 'Could I verify it or not?', '🧾', true),
+  consistency('Story didn\'t hold up', 'Changed, or didn\'t fit', '🧩', true),
+  reaction('Reaction to my question', 'Stalled, dodged, over-explained', '⏸️', true),
+  body('Body language', 'Hands, posture, fidgeting', '🙌', false),
+  face('Face & eyes', 'Smile, eye contact, expression', '👀', false),
+  gut('Just a feeling', 'No specific reason', '🎲', false);
+
+  const LieClue(this.label, this.hint, this.emoji, this.verbal);
+  final String label;
+  final String hint;
+  final String emoji;
+
+  /// Clues that come from what they said or how they handled questions.
+  final bool verbal;
+}
+
+class AskCard {
+  const AskCard(this.title, this.example, this.why);
+  final String title;
+  final String example;
+  final String why;
+
+  static const List<AskCard> all = <AskCard>[
+    AskCard('Ask for checkable details', '"Who else was there? Where exactly? What day was it?"',
+        'Real memories come with names, places and times you could check. Liars stay vague, or pick details nobody can check ("some guy", "I was alone").'),
+    AskCard('Ask something unexpected', '"What was the weather like?" · "What were you wearing?"',
+        'People rehearse the main story, not the side details. Watch for a stall, or a fast "I don\'t remember" on something easy.'),
+    AskCard('Ask for more', '"Tell me everything about that, even the small stuff."',
+        'Real memories expand easily. Made-up ones stay thin, or get padded with feelings and opinions instead of facts.'),
+    AskCard('Go backwards', '"What happened right before that? And before that?"',
+        'Telling a story out of order is hard when it\'s invented. True stories survive being told backwards.'),
+    AskCard('Ask how they know', '"How do you remember it was a Tuesday?"',
+        'Truth-tellers can usually say where a memory comes from ("it was my mom\'s birthday"). Liars often can\'t.'),
+    AskCard('Come back to it later', 'Two minutes later: "Wait, when was that again?"',
+        'True details stay the same. Invented ones drift, or get said word-for-word like a script.'),
+    AskCard('Ask them to place things', '"Where was everyone standing? Which side was the door on?"',
+        'Laying out a scene is hard to fake on the spot. Real memories have a layout.'),
+    AskCard('Pause after they answer', 'Say nothing. Just look interested for 3 seconds.',
+        'Silence makes people fill the gap. Liars often add too much, or a detail that doesn\'t fit.'),
+    AskCard('Hold back what you know', 'If you already know a fact, don\'t say it. Let them commit first.',
+        'Then compare their story with what you know. This is the best-tested technique investigators use.'),
+  ];
+}
+
 class RealLifeScreen extends StatefulWidget {
   const RealLifeScreen({super.key, required this.game});
   final GameState game;
@@ -12125,9 +12222,15 @@ class RealLifeScreen extends StatefulWidget {
 }
 
 class _RealLifeScreenState extends State<RealLifeScreen> {
+  static const List<String> _confidenceLabels = <String>['Guessing', 'Fairly sure', 'Certain'];
+
   final TextEditingController _name = TextEditingController();
   int? _guess;
+  LieClue? _clue;
+  int? _confidence;
   String? _result;
+  bool? _lastCorrect;
+  int _card = 0;
 
   GameState get game => widget.game;
 
@@ -12137,28 +12240,40 @@ class _RealLifeScreenState extends State<RealLifeScreen> {
     super.dispose();
   }
 
+  bool get _ready => _guess != null && _clue != null && _confidence != null;
+
   void _reveal(int lie) {
     final friend = _name.text.trim().isEmpty ? 'Friend' : _name.text.trim();
     final correct = _guess == lie;
-    game.recordRealLife(friend, correct: correct);
+    final clue = _clue!;
+    game.recordRealLife(friend, correct: correct, clue: clue, confidence: _confidence);
     if (correct) {
       HapticFeedback.mediumImpact();
     } else {
       HapticFeedback.heavyImpact();
     }
+    final s = game.clueStats[clue]!;
     setState(() {
-      _result = correct
-          ? 'You caught $friend\'s lie! 🎯'
-          : '$friend fooled you. The lie was #$lie. What did you miss?';
+      _lastCorrect = correct;
+      _result = (correct ? 'You caught $friend\'s lie! 🎯' : '$friend fooled you. The lie was #$lie.') +
+          ' Going by ${clue.label.toLowerCase()}, you\'re now ${s[1]}/${s[0]}.' +
+          (correct ? '' : ' Ask them what was true about the one you picked; that\'s where you learn.');
       _guess = null;
+      _clue = null;
+      _confidence = null;
+      _card = (_card + 1) % AskCard.all.length;
     });
   }
 
+  Widget _label(String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(text,
+            style: const TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1)),
+      );
+
   @override
   Widget build(BuildContext context) {
-    final stats = game.realLifeStats;
-    final total = stats.values.fold<int>(0, (a, s) => a + s[0]);
-    final right = stats.values.fold<int>(0, (a, s) => a + s[1]);
+    final card = AskCard.all[_card];
     return Scaffold(
       backgroundColor: Palette.background,
       body: SafeArea(
@@ -12175,16 +12290,19 @@ class _RealLifeScreenState extends State<RealLifeScreen> {
                   child: Text('Two Truths & a Lie',
                       style: TextStyle(color: Palette.textPrimary, fontSize: 23, fontWeight: FontWeight.w900)),
                 ),
+                TextButton(
+                  onPressed: () => Navigator.of(context)
+                      .push(MaterialPageRoute<void>(builder: (_) => const LieScienceScreen())),
+                  child: const Text('THE SCIENCE', style: TextStyle(color: Palette.pink, fontWeight: FontWeight.w800)),
+                ),
               ],
             ),
             const InfoBanner(
               icon: Icons.groups,
               color: Palette.pink,
-              text: 'Real people, real feedback. That\'s how this skill actually improves. A friend tells you three '
-                  'things about themselves; two are true, one is a lie. Ask follow-up questions, then guess.',
+              text: 'This is where the real skill grows: real people, a committed guess, then the truth. A friend '
+                  'says three things about themselves; two are true, one is a lie. Question them, then guess.',
             ),
-            const SizedBox(height: 14),
-            const _HowToRead(),
             const SizedBox(height: 14),
             TextField(
               controller: _name,
@@ -12197,10 +12315,46 @@ class _RealLifeScreenState extends State<RealLifeScreen> {
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
               ),
             ),
-            const SizedBox(height: 14),
-            const Text('1. YOUR GUESS: WHICH ONE IS THE LIE?',
-                style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1)),
-            const SizedBox(height: 8),
+            const SizedBox(height: 16),
+            _label('1. QUESTION THEM ABOUT ALL THREE'),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Palette.pink.withAlpha(28),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Palette.pink.withAlpha(140)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text('💬 ${card.title}',
+                            style: const TextStyle(color: Palette.textPrimary, fontSize: 16, fontWeight: FontWeight.w900)),
+                      ),
+                      Text('${_card + 1}/${AskCard.all.length}', style: const TextStyle(color: Palette.textMuted)),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(card.example,
+                      style: const TextStyle(color: Palette.pink, fontSize: 14.5, fontWeight: FontWeight.w700, height: 1.35)),
+                  const SizedBox(height: 6),
+                  Text(card.why, style: const TextStyle(color: Palette.textPrimary, fontSize: 13.5, height: 1.4)),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: () => setState(() => _card = (_card + 1) % AskCard.all.length),
+                      icon: const Icon(Icons.skip_next, color: Palette.pink),
+                      label: const Text('Another question',
+                          style: TextStyle(color: Palette.pink, fontWeight: FontWeight.w800)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _label('2. WHICH ONE IS THE LIE?'),
             Row(
               children: <Widget>[
                 for (var i = 1; i <= 3; i++) ...<Widget>[
@@ -12219,11 +12373,42 @@ class _RealLifeScreenState extends State<RealLifeScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            Text(
-              _guess == null ? '2. Then ask which one was the lie' : '2. NOW ASK THEM: WHICH ONE WAS THE LIE?',
-              style: const TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1),
+            _label('3. WHAT GAVE IT AWAY?'),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                for (final c in LieClue.values)
+                  ChoiceChip(
+                    label: Text('${c.emoji} ${c.label}'),
+                    selected: _clue == c,
+                    onSelected: (_) => setState(() => _clue = c),
+                  ),
+              ],
             ),
-            const SizedBox(height: 8),
+            if (_clue != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(_clue!.hint, style: const TextStyle(color: Palette.textMuted, fontSize: 12.5)),
+              ),
+            const SizedBox(height: 16),
+            _label('4. HOW SURE ARE YOU?'),
+            Row(
+              children: <Widget>[
+                for (var i = 0; i < 3; i++) ...<Widget>[
+                  if (i > 0) const SizedBox(width: 8),
+                  Expanded(
+                    child: ChoiceChip(
+                      label: Text(_confidenceLabels[i]),
+                      selected: _confidence == i,
+                      onSelected: (_) => setState(() => _confidence = i),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 16),
+            _label(_ready ? '5. NOW ASK THEM: WHICH ONE WAS THE LIE?' : '5. Answer 2–4 first, then ask them'),
             Row(
               children: <Widget>[
                 for (var i = 1; i <= 3; i++) ...<Widget>[
@@ -12233,7 +12418,7 @@ class _RealLifeScreenState extends State<RealLifeScreen> {
                       label: 'It was #$i',
                       color: Palette.pink,
                       height: 46,
-                      onPressed: _guess == null ? null : () => _reveal(i),
+                      onPressed: _ready ? () => _reveal(i) : null,
                     ),
                   ),
                 ],
@@ -12243,37 +12428,12 @@ class _RealLifeScreenState extends State<RealLifeScreen> {
               const SizedBox(height: 12),
               InfoBanner(
                 icon: Icons.flag,
-                color: _result!.contains('caught') ? Palette.green : Palette.orange,
+                color: _lastCorrect == true ? Palette.green : Palette.orange,
                 text: _result!,
               ),
             ],
             const SizedBox(height: 22),
-            const Text('YOUR REAL-LIFE RECORD',
-                style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1)),
-            const SizedBox(height: 8),
-            if (total == 0)
-              const Text('No rounds yet. Chance alone gets about 33%. Your goal is to beat that.',
-                  style: TextStyle(color: Palette.textMuted, fontSize: 14))
-            else ...<Widget>[
-              Text(
-                '$right of $total caught (${(100 * right / total).round()}%)  ·  chance is 33%',
-                style: const TextStyle(color: Palette.textPrimary, fontSize: 16, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 8),
-              for (final e in (stats.entries.toList()..sort((a, b) => b.value[0].compareTo(a.value[0]))))
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: Text(e.key, style: const TextStyle(color: Palette.textPrimary, fontSize: 15)),
-                      ),
-                      Text('${e.value[1]}/${e.value[0]}',
-                          style: const TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w700)),
-                    ],
-                  ),
-                ),
-            ],
+            RealLifeInsights(game: game, showFriends: true),
           ],
         ),
       ),
@@ -12281,39 +12441,237 @@ class _RealLifeScreenState extends State<RealLifeScreen> {
   }
 }
 
-class _HowToRead extends StatelessWidget {
-  const _HowToRead();
+/// Your real-life record: overall vs chance, which clues work, and calibration.
+class RealLifeInsights extends StatelessWidget {
+  const RealLifeInsights({super.key, required this.game, this.showFriends = false});
+  final GameState game;
+  final bool showFriends;
 
-  static const List<String> _steps = <String>[
-    'Baseline first: chat for a minute and notice how they normally talk, sit and move.',
-    'After each statement, ask one follow-up: "When was that?" "Who was with you?" Real memories have details ready; lies need building.',
-    'Ask one unexpected question about each, like "What were you wearing?"',
-    'Watch for changes from THEIR baseline, not "nervous" behavior in general.',
-    'Commit to your guess before they reveal, so the feedback counts.',
-  ];
+  static String _pct(List<int> s) => s[0] == 0 ? '–' : '${(100 * s[1] / s[0]).round()}%';
+
+  /// Advice from the clue stats, or null if there's not enough data yet.
+  static String? takeaway(GameState game) {
+    final tried = game.clueStats.entries.where((e) => e.value[0] >= 3).toList();
+    if (tried.isEmpty) return null;
+    double rate(List<int> s) => s[1] / s[0];
+    tried.sort((a, b) => rate(b.value).compareTo(rate(a.value)));
+    final best = tried.first;
+    final worst = tried.last;
+    final parts = <String>['Your best clue so far: ${best.key.emoji} ${best.key.label} (${_pct(best.value)}).'];
+    if (tried.length > 1 && rate(worst.value) < 0.4) {
+      parts.add('Stop trusting ${worst.key.label.toLowerCase()} (${_pct(worst.value)}).');
+    }
+    if (!best.key.verbal) {
+      parts.add('Check that over more rounds; in studies, body and face clues are the least reliable.');
+    }
+    return parts.join(' ');
+  }
 
   @override
   Widget build(BuildContext context) {
+    final stats = game.realLifeStats;
+    final total = stats.values.fold<int>(0, (a, s) => a + s[0]);
+    final right = stats.values.fold<int>(0, (a, s) => a + s[1]);
+    final advice = takeaway(game);
+    final clues = LieClue.values.where((c) => (game.clueStats[c]?[0] ?? 0) > 0).toList()
+      ..sort((a, b) => game.clueStats[b]![0].compareTo(game.clueStats[a]![0]));
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Palette.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Palette.border),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Palette.border, width: 1.5),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          const Text('HOW TO PLAY IT LIKE A CONSULTANT',
-              style: TextStyle(color: Palette.pink, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1)),
+          const Text('YOUR REAL-LIFE RECORD',
+              style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
           const SizedBox(height: 8),
-          for (var i = 0; i < _steps.length; i++)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Text('${i + 1}. ${_steps[i]}',
-                  style: const TextStyle(color: Palette.textPrimary, fontSize: 14, height: 1.4)),
+          if (total == 0)
+            const Text(
+              'No rounds yet. Guessing blind gets about 33%. Your goal is to beat that, and to find out which clues '
+              'actually work for you.',
+              style: TextStyle(color: Palette.textMuted, fontSize: 14, height: 1.4),
+            )
+          else ...<Widget>[
+            Text(
+              '$right of $total caught (${(100 * right / total).round()}%)  ·  chance is 33%',
+              style: TextStyle(
+                color: right / total > 0.4 ? Palette.green : Palette.textPrimary,
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+              ),
             ),
+            const SizedBox(height: 6),
+            _Bar(value: right / total, color: right / total > 0.4 ? Palette.green : Palette.orange),
+            if (clues.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 14),
+              const Text('WHEN YOU WENT BY…',
+                  style: TextStyle(color: Palette.pink, fontSize: 11.5, fontWeight: FontWeight.w800, letterSpacing: 1)),
+              const SizedBox(height: 6),
+              for (final c in clues)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text('${c.emoji} ${c.label}',
+                            style: const TextStyle(color: Palette.textPrimary, fontSize: 14.5)),
+                      ),
+                      Text(
+                        '${game.clueStats[c]![1]}/${game.clueStats[c]![0]}  ${_pct(game.clueStats[c]!)}',
+                        style: TextStyle(
+                          color: game.clueStats[c]![1] / game.clueStats[c]![0] > 0.4 ? Palette.green : Palette.orange,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+            if (game.confidenceStats.any((s) => s[0] > 0)) ...<Widget>[
+              const SizedBox(height: 10),
+              const Text('WHEN YOU FELT…',
+                  style: TextStyle(color: Palette.pink, fontSize: 11.5, fontWeight: FontWeight.w800, letterSpacing: 1)),
+              const SizedBox(height: 6),
+              for (var i = 0; i < 3; i++)
+                if (game.confidenceStats[i][0] > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(_RealLifeScreenState._confidenceLabels[i],
+                              style: const TextStyle(color: Palette.textPrimary, fontSize: 14.5)),
+                        ),
+                        Text(
+                          '${game.confidenceStats[i][1]}/${game.confidenceStats[i][0]}  ${_pct(game.confidenceStats[i])}',
+                          style: const TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800),
+                        ),
+                      ],
+                    ),
+                  ),
+              const Text(
+                'Good lie-catchers are right more often when they feel certain. If "Certain" isn\'t beating '
+                '"Guessing", your gut isn\'t calibrated yet.',
+                style: TextStyle(color: Palette.textMuted, fontSize: 12, height: 1.35),
+              ),
+            ],
+            const SizedBox(height: 10),
+            InfoBanner(
+              icon: Icons.lightbulb,
+              color: Palette.gold,
+              text: advice ?? 'Play 3+ rounds with the same clue to see if it works for you.',
+            ),
+            if (showFriends) ...<Widget>[
+              const SizedBox(height: 14),
+              const Text('BY FRIEND',
+                  style: TextStyle(color: Palette.pink, fontSize: 11.5, fontWeight: FontWeight.w800, letterSpacing: 1)),
+              const SizedBox(height: 6),
+              for (final e in (stats.entries.toList()..sort((a, b) => b.value[0].compareTo(a.value[0]))))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(child: Text(e.key, style: const TextStyle(color: Palette.textPrimary, fontSize: 15))),
+                      Text('${e.value[1]}/${e.value[0]}',
+                          style: const TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+            ],
+          ],
         ],
+      ),
+    );
+  }
+}
+
+/// What the research says actually works for catching lies.
+class LieScienceScreen extends StatelessWidget {
+  const LieScienceScreen({super.key});
+
+  static const List<(String, String, String)> _sections = <(String, String, String)>[
+    ('🎲', 'Most people are near a coin flip',
+        'Across hundreds of studies, people catch lies about 54% of the time. Police, judges and customs officers do '
+            'about the same. Being "good at reading people" usually means being confident, not accurate.'),
+    ('🤥', 'There is no Pinocchio\'s nose',
+        'No single behavior means lying. Looking away, fidgeting and touching the face happen to honest people all the '
+            'time, especially when they feel accused. Nervous is not the same as lying.'),
+    ('👂', 'Words beat body language',
+        'The clues that hold up best in research are in what people say: how much detail, whether it can be checked, '
+            'and whether the story holds together. Body language gives tiny, unreliable signals.'),
+    ('🧠', 'Make lying hard work',
+        'Lying takes more mental effort than telling the truth. Unexpected questions, asking for more detail, or '
+            'telling the story backwards add load. A liar starts to stall, stay vague or contradict themselves; '
+            'a truth-teller just remembers more.'),
+    ('🧾', 'Check what can be checked',
+        'Truthful people tend to give details someone could verify: names, places, times, receipts, messages. Liars '
+            'often give lots of detail that can\'t be checked ("I was alone", "some guy").'),
+    ('🤫', 'Hold back what you know',
+        'If you know a fact, don\'t reveal it. Ask open questions first and let them commit to a story, then compare. '
+            'This is called Strategic Use of Evidence, and it has some of the strongest results of any method.'),
+    ('📏', 'Baseline, then clusters',
+        'Compare people to how THEY normally act, not to an average person. One odd moment means little; several '
+            'changes at the same moment, on the same topic, mean more.'),
+    ('🎯', 'Feedback is how you improve',
+        'Without finding out if you were right, your skill doesn\'t improve; you just get more confident. Always '
+            'commit to a guess before you learn the answer, and track what you went on. That\'s what Two Truths & '
+            'a Lie is for.'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                IconButton(
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.arrow_back, color: Palette.textMuted),
+                ),
+                const Expanded(
+                  child: Text('What Actually Works',
+                      style: TextStyle(color: Palette.textPrimary, fontSize: 23, fontWeight: FontWeight.w900)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            for (final s in _sections)
+              Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Palette.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Palette.border),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(s.$1, style: const TextStyle(fontSize: 28)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(s.$2,
+                              style: const TextStyle(color: Palette.textPrimary, fontSize: 16, fontWeight: FontWeight.w900)),
+                          const SizedBox(height: 4),
+                          Text(s.$3, style: const TextStyle(color: Palette.textPrimary, fontSize: 14, height: 1.45)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -13327,6 +13685,17 @@ class _ProgressScreenState extends State<ProgressScreen> {
             ),
             const SizedBox(height: 16),
             _RankCard(game: game),
+            const SizedBox(height: 14),
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(18),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => RealLifeScreen(game: game)),
+                ),
+                child: RealLifeInsights(game: game),
+              ),
+            ),
             const SizedBox(height: 14),
             _MissionsCard(game: game),
             const SizedBox(height: 14),
