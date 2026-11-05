@@ -29,7 +29,7 @@ void main() {
   });
 
   test('bets and payouts move IP and are saved', () {
-    final g = GameState();
+    final g = GameState(missionsOn: false);
     g.recordCase('tips', 3); // 50 IP to play with
     expect(g.insightPoints, 50);
     g.placeBet(20);

@@ -105,7 +105,7 @@ void main() {
   });
 
   test('practice state round-trips', () {
-    final a = GameState();
+    final a = GameState(missionsOn: false);
     final missed = Curriculum.challenges.first;
     a.recordPractice(missed, correct: false, ip: 0);
     a.reportPracticeScore(PracticeMode.survival.name, 12);

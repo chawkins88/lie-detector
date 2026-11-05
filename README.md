@@ -92,6 +92,24 @@ about 5 minutes covers spaced review, Number Span and a rotating drill of the da
 
 Progress (both tabs) is saved on the phone with `shared_preferences`; nothing leaves the device.
 
+## Progress
+
+The fourth tab shows whether you're actually getting better.
+
+- **Reader Rating & ranks.** Every lie-reading answer moves an Elo-style rating
+  (start 800). Hard, high-level questions move it the most; easy ones stop helping
+  once you're good. Ranks: Rookie → Observer (900) → Analyst (1000) →
+  Investigator (1100) → Profiler (1250) → Interrogator (1400) → Mentalist (1550)
+  → Human Lie Detector (1700). The answer sheet shows the change after each answer.
+- **Daily missions.** Three a day (one lie-reading, one memory, one other).
+  +15 IP each, +40 for all three.
+- **Weekly Checkup.** 20 questions, two from every level plus four hard extras,
+  no feedback until the end. Same shape every time, so scores compare fairly.
+  Shows first / best / latest and what you missed.
+- **Weak Spot Training.** Ten questions aimed at your three least accurate skills.
+- **Memory records** and **37 badges**. Badges, missions and rank-ups pop up at
+  the top of the screen when you earn them.
+
 ## Game rules
 
 - 3 hearts. A wrong answer costs 1 heart and the challenge repeats at the end of the quest.

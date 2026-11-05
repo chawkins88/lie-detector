@@ -74,7 +74,7 @@ void main() {
   });
 
   test('progress survives a save and reload', () {
-    final a = GameState();
+    final a = GameState(missionsOn: false);
     a.recordMemoryTrial(MemoryDrill.palace, passed: true, levelDelta: 1, ip: 7);
     a.reviewCard(MemoryContent.cards.first.id, knew: true);
     a.completeMemorySession(MemoryDrill.palace);

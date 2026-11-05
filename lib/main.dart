@@ -2428,13 +2428,20 @@ class QuestReward {
 }
 
 class GameState extends ChangeNotifier {
-  GameState({AppStore? store}) : _store = store ?? AppStore.memoryOnly() {
+  GameState({AppStore? store, this.missionsOn = true}) : _store = store ?? AppStore.memoryOnly() {
     _restore(_store.load());
+    _checkAchievements(silent: true);
+    if (_introBadges && achievements.isNotEmpty) {
+      _toasts.add('🏅 You already earned ${achievements.length} badges. See the Progress tab!');
+    }
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
   }
 
   final AppStore _store;
   bool _dirty = false;
+
+  /// Daily missions can be switched off so tests get exact IP totals.
+  final bool missionsOn;
 
   /// Memory Gym progress, saved with everything else.
   final MemoryState memory = MemoryState();
@@ -2458,7 +2465,10 @@ class GameState extends ChangeNotifier {
 
   void recordCase(String id, int stars) {
     if (stars > (caseStars[id] ?? 0)) caseStars[id] = stars;
-    if (stars > 0) insightPoints += 20 + 10 * stars;
+    if (stars > 0) {
+      insightPoints += 20 + 10 * stars;
+      _bump(MissionKind.consultant);
+    }
     _touchStreak();
     _changed();
   }
@@ -2489,6 +2499,7 @@ class GameState extends ChangeNotifier {
     blackjackStats[0]++;
     blackjackStats[1] += returned - staked;
     blackjackStats[2] = math.max(blackjackStats[2], returned - staked);
+    _bump(MissionKind.hands);
     _changed();
   }
 
@@ -2521,6 +2532,7 @@ class GameState extends ChangeNotifier {
       typeMisses[c.type] = typeMisses[c.type]! + 1;
     }
     insightPoints += ip;
+    _rate(c, correct);
     _trackMistake(c, correct);
     _logDay(correct);
     _changed();
@@ -2537,6 +2549,7 @@ class GameState extends ChangeNotifier {
   /// Returns true if today's bonus was awarded.
   bool completeDaily(int bonus) {
     _touchStreak();
+    _bump(MissionKind.daily);
     final today = dayIndex();
     if (dailyDoneDay == today) {
       _changed();
@@ -2656,6 +2669,7 @@ class GameState extends ChangeNotifier {
       if (hearts > 0) hearts--;
       _nextHeartAt ??= DateTime.now().add(heartRegenInterval);
     }
+    _rate(challenge, correct);
     _trackMistake(challenge, correct);
     _logDay(correct);
     _changed();
@@ -2673,6 +2687,7 @@ class GameState extends ChangeNotifier {
     }
 
     final streakExtended = _touchStreak();
+    _bump(MissionKind.lesson);
 
     var healed = false;
     if (hearts < maxHearts) {
@@ -2719,6 +2734,8 @@ class GameState extends ChangeNotifier {
   /// Returns true if this session extended the day streak.
   bool completeMemorySession(MemoryDrill drill) {
     memory.finishSession(drill, dayIndex());
+    _bump(MissionKind.memory);
+    if (drill == MemoryDrill.cards) _bump(MissionKind.cards);
     final extended = _touchStreak();
     _changed();
     return extended;
@@ -2728,7 +2745,10 @@ class GameState extends ChangeNotifier {
   bool recordCoach({required bool passed, required int stageIndex}) {
     final m = memory;
     var advanced = false;
-    if (passed) insightPoints += 2;
+    if (passed) {
+      insightPoints += 2;
+      _bump(MissionKind.coach);
+    }
     if (stageIndex == m.coachStage) {
       if (passed) {
         m.coachStreak++;
@@ -2752,10 +2772,158 @@ class GameState extends ChangeNotifier {
     _changed();
   }
 
+  // ── Rating, missions, checkups, badges ──────────────────────────────────
+
+  static const int startRating = 800;
+  static const int missionReward = 15;
+  static const int allMissionsBonus = 40;
+  static const int checkupBonus = 30;
+  static const int checkupLength = 20;
+
+  /// Reader Rating: an Elo-style lie-reading score. Harder questions move it more.
+  int rating = startRating;
+  int peakRating = startRating;
+  int lastRatingDelta = 0;
+
+  /// Day → rating at the end of that day.
+  final Map<int, int> ratingLog = <int, int>{};
+
+  /// Checkup results: [day, correct, total].
+  final List<List<int>> checkups = <List<int>>[];
+
+  int missionDay = -1;
+  final Map<MissionKind, int> missionProgress = <MissionKind, int>{};
+  int missionsAllDoneDays = 0;
+  int _runCorrect = 0;
+
+  final Set<String> achievements = <String>{};
+  final List<String> _toasts = <String>[];
+  bool _introBadges = false;
+
+  ReaderRank get rank => ReaderRank.of(rating);
+
+  bool get hasToasts => _toasts.isNotEmpty;
+
+  List<String> takeToasts() {
+    final out = List<String>.of(_toasts);
+    _toasts.clear();
+    return out;
+  }
+
+  /// How hard a question is on the rating scale.
+  static int difficultyOf(Challenge c) => 700 + 110 * c.level + (c.highLoad ? 160 : 0);
+
+  void _rate(Challenge c, bool correct) {
+    final expected = 1 / (1 + math.pow(10, (difficultyOf(c) - rating) / 400));
+    final k = totalAnswered <= 30 ? 40 : 24;
+    final before = rating;
+    final oldPeakRank = ReaderRank.of(peakRating);
+    rating = (rating + k * ((correct ? 1 : 0) - expected)).round().clamp(400, 3000);
+    lastRatingDelta = rating - before;
+    if (rating > peakRating) {
+      peakRating = rating;
+      final r = ReaderRank.of(rating);
+      if (r.index > oldPeakRank.index) _toasts.add('${r.emoji} Rank up: ${r.title}!');
+    }
+    final d = dayIndex();
+    ratingLog[d] = rating;
+    ratingLog.removeWhere((day, _) => day < d - 120);
+
+    _bump(MissionKind.answer);
+    if (correct) {
+      _runCorrect++;
+      _bump(MissionKind.correct);
+      _missionAtLeast(MissionKind.inARow, _runCorrect);
+    } else {
+      _runCorrect = 0;
+    }
+  }
+
+  /// Rating at the end of [day] (the last known value on or before it).
+  int ratingOn(int day) {
+    int? bestDay;
+    for (final d in ratingLog.keys) {
+      if (d <= day && (bestDay == null || d > bestDay)) bestDay = d;
+    }
+    if (bestDay != null) return ratingLog[bestDay]!;
+    if (ratingLog.isEmpty) return rating;
+    return ratingLog[ratingLog.keys.reduce(math.min)]!;
+  }
+
+  List<MissionKind> get todaysMissions => MissionKind.forDay(dayIndex());
+
+  int missionCount(MissionKind k) => missionDay == dayIndex() ? (missionProgress[k] ?? 0) : 0;
+
+  bool missionDone(MissionKind k) => missionCount(k) >= k.target;
+
+  void bumpMission(MissionKind k) {
+    _bump(k);
+    _changed();
+  }
+
+  void _bump(MissionKind k) => _missionAtLeast(k, missionCount(k) + 1);
+
+  void _missionAtLeast(MissionKind k, int value) {
+    final today = dayIndex();
+    if (missionDay != today) {
+      missionDay = today;
+      missionProgress.clear();
+    }
+    final missions = MissionKind.forDay(today);
+    if (!missionsOn || !missions.contains(k)) return;
+    final before = missionProgress[k] ?? 0;
+    if (value <= before) return;
+    missionProgress[k] = value;
+    if (before < k.target && value >= k.target) {
+      insightPoints += missionReward;
+      _toasts.add('${k.emoji} Mission done: ${k.title}  +$missionReward IP');
+      if (missions.every((m) => (missionProgress[m] ?? 0) >= m.target)) {
+        insightPoints += allMissionsBonus;
+        missionsAllDoneDays++;
+        _toasts.add('🏆 All 3 missions done!  +$allMissionsBonus IP');
+      }
+    }
+  }
+
+  void recordCheckup(int correct, int total) {
+    checkups.add(<int>[dayIndex(), correct, total]);
+    if (checkups.length > 60) checkups.removeAt(0);
+    insightPoints += checkupBonus;
+    _touchStreak();
+    _changed();
+  }
+
+  int? get firstCheckupPct => checkups.isEmpty ? null : (100 * checkups.first[1] / checkups.first[2]).round();
+
+  int? get bestCheckupPct => checkups.isEmpty
+      ? null
+      : checkups.map((c) => (100 * c[1] / c[2]).round()).reduce(math.max);
+
+  /// The skills you miss most (at least 3 tries, under 85% right), worst first.
+  List<Flag> weakFlags({int count = 3}) {
+    double acc(Flag f) => (flagAttempts[f]! - flagMisses[f]!) / flagAttempts[f]!;
+    final list = Flag.values.where((f) => flagAttempts[f]! >= 3 && acc(f) < 0.85).toList()
+      ..sort((a, b) {
+        final byAcc = acc(a).compareTo(acc(b));
+        return byAcc != 0 ? byAcc : flagMisses[b]!.compareTo(flagMisses[a]!);
+      });
+    return list.take(count).toList();
+  }
+
+  void _checkAchievements({bool silent = false}) {
+    for (final a in Achievement.all) {
+      if (achievements.contains(a.id)) continue;
+      if (!a.test(this)) continue;
+      achievements.add(a.id);
+      if (!silent) _toasts.add('${a.emoji} Badge unlocked: ${a.title}');
+    }
+  }
+
   // ── Saving ──────────────────────────────────────────────────────────────
 
   void _changed() {
     _dirty = true;
+    _checkAchievements();
     notifyListeners();
   }
 
@@ -2782,6 +2950,14 @@ class GameState extends ChangeNotifier {
         'caseStars': caseStars,
         'realLife': realLifeStats,
         'blackjack': blackjackStats,
+        'rating': rating,
+        'peakRating': peakRating,
+        'ratingLog': <String, int>{for (final e in ratingLog.entries) '${e.key}': e.value},
+        'checkups': checkups,
+        'missionDay': missionDay,
+        'missions': <String, int>{for (final e in missionProgress.entries) e.key.name: e.value},
+        'missionsAll': missionsAllDoneDays,
+        'achievements': achievements.toList(),
       };
 
   @visibleForTesting
@@ -2833,6 +3009,38 @@ class GameState extends ChangeNotifier {
           blackjackStats[i] = bj[i] as int;
         }
       }
+      final savedRating = data['rating'];
+      if (savedRating is int) {
+        rating = savedRating.clamp(400, 3000);
+      } else if (totalAnswered > 0) {
+        // Older saves: start from how far you've come instead of from zero.
+        final acc = totalAnswered >= 20 ? lifetimeAccuracy : 0.6;
+        rating = (startRating + 70 * (highestUnlockedLevel - 1) + (acc - 0.6) * 400).round().clamp(600, 1300);
+      }
+      peakRating = math.max(rating, _readInt(data['peakRating'], rating));
+      final rLog = data['ratingLog'];
+      if (rLog is Map) {
+        rLog.forEach((Object? k, Object? v) {
+          final day = int.tryParse('$k');
+          if (day != null && v is int) ratingLog[day] = v;
+        });
+      }
+      if (totalAnswered > 0 && ratingLog.isEmpty) ratingLog[dayIndex()] = rating;
+      final cks = data['checkups'];
+      if (cks is List) {
+        for (final c in cks) {
+          if (c is List && c.length == 3 && c.every((v) => v is int) && (c[2] as int) > 0) {
+            checkups.add(<int>[c[0] as int, c[1] as int, c[2] as int]);
+          }
+        }
+      }
+      missionDay = _readInt(data['missionDay'], -1);
+      _readCounts(data['missions'], missionProgress, MissionKind.values.asNameMap());
+      missionsAllDoneDays = _readInt(data['missionsAll'], 0);
+      final ach = data['achievements'];
+      final hadBadges = ach is List;
+      if (ach is List) achievements.addAll(ach.whereType<String>());
+      _introBadges = !hadBadges && totalAnswered > 0;
       final real = data['realLife'];
       if (real is Map) {
         real.forEach((Object? k, Object? v) {
@@ -2873,6 +3081,120 @@ class GameState extends ChangeNotifier {
     if (_dirty) _persist();
     super.dispose();
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  RANKS, DAILY MISSIONS & BADGES
+// ════════════════════════════════════════════════════════════════════════════
+
+enum ReaderRank {
+  rookie('Rookie', '🐣', 0, 'You\'re learning what to look for.'),
+  observer('Observer', '👀', 900, 'You notice changes most people miss.'),
+  analyst('Analyst', '🔍', 1000, 'You read the baseline before judging.'),
+  investigator('Investigator', '🕵️', 1100, 'Clusters and statements don\'t fool you easily.'),
+  profiler('Profiler', '🧠', 1250, 'You read people across every skill.'),
+  interrogator('Interrogator', '🎯', 1400, 'You hold up on the hardest questions.'),
+  mentalist('Mentalist', '🎩', 1550, 'Patrick Jane would nod.'),
+  human('Human Lie Detector', '👑', 1700, 'Top of the scale.');
+
+  const ReaderRank(this.title, this.emoji, this.minRating, this.blurb);
+  final String title;
+  final String emoji;
+  final int minRating;
+  final String blurb;
+
+  static ReaderRank of(int rating) => values.lastWhere((r) => rating >= r.minRating);
+
+  ReaderRank? get next => index + 1 < values.length ? values[index + 1] : null;
+}
+
+enum MissionKind {
+  answer('Answer 15 lie-reading questions', '🎯', 15, 0),
+  correct('Get 12 lie-reading answers right', '✅', 12, 0),
+  inARow('Get 6 right in a row', '🔥', 6, 0),
+  memory('Finish 2 memory drills', '🧠', 2, 1),
+  cards('Count down a deck in Card Counting', '🃏', 1, 1),
+  coach('Pass 3 Chunking Coach rounds', '🧩', 3, 1),
+  lesson('Finish a Cold Reading lesson', '📘', 1, 2),
+  daily('Solve the Daily Case File', '📁', 1, 2),
+  consultant('Get a confession in The Consultant', '🕵️', 1, 2),
+  hands('Play 5 blackjack hands', '♠️', 5, 2),
+  weak('Finish a Weak Spot Training run', '🩹', 1, 2);
+
+  const MissionKind(this.title, this.emoji, this.target, this.group);
+  final String title;
+  final String emoji;
+  final int target;
+
+  /// 0 = lie reading, 1 = memory, 2 = anything else. One of each per day.
+  final int group;
+
+  /// Today's three missions. Same for the whole day.
+  static List<MissionKind> forDay(int day) {
+    final rng = math.Random(day * 104729 + 11);
+    final out = <MissionKind>[];
+    for (var g = 0; g < 3; g++) {
+      final pool = values.where((m) => m.group == g).toList();
+      out.add(pool[rng.nextInt(pool.length)]);
+    }
+    return out;
+  }
+}
+
+class Achievement {
+  const Achievement(this.id, this.emoji, this.title, this.description, this.test);
+  final String id;
+  final String emoji;
+  final String title;
+  final String description;
+  final bool Function(GameState g) test;
+
+  static int _best(GameState g, MemoryDrill d) => g.memory.best[d] ?? 0;
+
+  static final List<Achievement> all = <Achievement>[
+    Achievement('first', '🌱', 'First Steps', 'Answer your first question.', (g) => g.totalAnswered >= 1),
+    Achievement('hundred', '💯', 'Century', 'Answer 100 questions.', (g) => g.totalAnswered >= 100),
+    Achievement('fivehundred', '📚', 'Case Hardened', 'Answer 500 questions.', (g) => g.totalAnswered >= 500),
+    Achievement('thousand', '🗄️', 'Thousand Files', 'Answer 1,000 questions.', (g) => g.totalAnswered >= 1000),
+    Achievement('sharp', '🎯', 'Sharp Eye', 'Keep 75%+ accuracy over 100+ answers.',
+        (g) => g.totalAnswered >= 100 && g.lifetimeAccuracy >= 0.75),
+    Achievement('level3', '🧭', 'Getting Serious', 'Reach Level 3.', (g) => g.highestUnlockedLevel >= 3),
+    Achievement('level5', '🗝️', 'Deep In', 'Reach Level 5.', (g) => g.highestUnlockedLevel >= 5),
+    Achievement('level8', '🏔️', 'Final Level', 'Reach Level 8.', (g) => g.highestUnlockedLevel >= 8),
+    Achievement('graduate', '🎓', 'Graduate', 'Pass the final exam.', (g) => g.completedNodeIds.contains('exam')),
+    Achievement('observer', '👀', 'Observer', 'Reach a 900 Reader Rating.', (g) => g.peakRating >= 900),
+    Achievement('investigator', '🕵️', 'Investigator', 'Reach a 1100 Reader Rating.', (g) => g.peakRating >= 1100),
+    Achievement('profiler', '🧠', 'Profiler', 'Reach a 1250 Reader Rating.', (g) => g.peakRating >= 1250),
+    Achievement('mentalist', '🎩', 'Mentalist', 'Reach a 1550 Reader Rating.', (g) => g.peakRating >= 1550),
+    Achievement('streak3', '🔥', 'On Fire', 'Keep a 3-day streak.', (g) => g.streak >= 3),
+    Achievement('streak7', '⚡', 'One Full Week', 'Keep a 7-day streak.', (g) => g.streak >= 7),
+    Achievement('streak30', '🌋', 'Unstoppable', 'Keep a 30-day streak.', (g) => g.streak >= 30),
+    Achievement('missions5', '📅', 'Dedicated', 'Finish all 3 daily missions on 5 days.', (g) => g.missionsAllDoneDays >= 5),
+    Achievement('checkup', '🩺', 'Checked In', 'Take your first Checkup.', (g) => g.checkups.isNotEmpty),
+    Achievement('checkup80', '🏅', 'Top Marks', 'Score 80% or more on a Checkup.', (g) => (g.bestCheckupPct ?? 0) >= 80),
+    Achievement('improved', '📈', 'Proof of Progress', 'Beat your first Checkup score by 15 points.',
+        (g) => g.checkups.length >= 2 && g.bestCheckupPct! - g.firstCheckupPct! >= 15),
+    Achievement('lab10', '🧪', 'Lab Rat', 'Hit a 10 streak in Baseline Lab.', (g) => (g.practiceBest['baselineLab'] ?? 0) >= 10),
+    Achievement('speed15', '⏱️', 'Quick Read', 'Get 15 right in a Speed Round.', (g) => (g.practiceBest['speed'] ?? 0) >= 15),
+    Achievement('survive20', '🛡️', 'Survivor', 'Survive 20 questions in Survival.', (g) => (g.practiceBest['survival'] ?? 0) >= 20),
+    Achievement('digits10', '🔢', 'Phone Book', 'Remember 10 digits in Number Span.', (g) => _best(g, MemoryDrill.digits) >= 10),
+    Achievement('digits15', '🧮', 'Human Calculator', 'Remember 15 digits in Number Span.', (g) => _best(g, MemoryDrill.digits) >= 15),
+    Achievement('words12', '🔗', 'Storyteller', 'Remember 12 words in Story Chain.', (g) => _best(g, MemoryDrill.words) >= 12),
+    Achievement('palace10', '🏛️', 'Architect', 'Place 10 items in a Memory Palace.', (g) => _best(g, MemoryDrill.palace) >= 10),
+    Achievement('faces7', '🤝', 'Never Forget a Face', 'Remember 7 names in Names & Faces.', (g) => _best(g, MemoryDrill.faces) >= 7),
+    Achievement('coach', '🧩', 'Chunk Master', 'Graduate from the Chunking Coach.',
+        (g) => g.memory.coachStage >= ChunkCoach.stages.length),
+    Achievement('cards20', '🗂️', 'Well Read', 'Learn 20 study cards in Spaced Review.', (g) => g.memory.learnedCards() >= 20),
+    Achievement('count5', '🃏', 'Counter', 'Reach Card Counting level 5.', (g) => _best(g, MemoryDrill.cards) >= 5),
+    Achievement('count10', '🎰', 'Advantage Player', 'Reach Card Counting level 10.', (g) => _best(g, MemoryDrill.cards) >= 10),
+    Achievement('hands50', '♠️', 'Regular', 'Play 50 blackjack hands.', (g) => g.blackjackStats[0] >= 50),
+    Achievement('bigwin', '💰', 'High Roller', 'Win 300+ IP in one blackjack hand.', (g) => g.blackjackStats[2] >= 300),
+    Achievement('case1', '🔎', 'First Confession', 'Solve a Consultant case.', (g) => g.caseStars.values.any((s) => s > 0)),
+    Achievement('allcases', '⭐', 'Patrick Would Be Proud', 'Get 3 stars on every Consultant case.',
+        (g) => ConsultantCases.all.every((c) => (g.caseStars[c.id] ?? 0) >= 3)),
+    Achievement('reallife10', '🎭', 'Party Trick', 'Play 10 rounds of Two Truths & a Lie.',
+        (g) => g.realLifeStats.values.fold<int>(0, (a, s) => a + s[0]) >= 10),
+  ];
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -3038,17 +3360,49 @@ class ColdReadingApp extends StatefulWidget {
 
 class _ColdReadingAppState extends State<ColdReadingApp> {
   late final GameState _game = GameState(store: widget.store);
+  final GlobalKey<NavigatorState> _navKey = GlobalKey<NavigatorState>();
+  final List<String> _toastQueue = <String>[];
+  bool _showingToast = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _game.addListener(_drainToasts);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _drainToasts());
+  }
 
   @override
   void dispose() {
+    _game.removeListener(_drainToasts);
     _game.dispose();
     super.dispose();
+  }
+
+  void _drainToasts() {
+    if (_game.hasToasts) _toastQueue.addAll(_game.takeToasts());
+    _showNextToast();
+  }
+
+  void _showNextToast() {
+    if (_showingToast || _toastQueue.isEmpty || !mounted) return;
+    final overlay = _navKey.currentState?.overlay;
+    if (overlay == null) return;
+    _showingToast = true;
+    final text = _toastQueue.removeAt(0);
+    final entry = OverlayEntry(builder: (_) => _ToastBanner(text: text));
+    overlay.insert(entry);
+    Future<void>.delayed(const Duration(milliseconds: 2800), () {
+      if (entry.mounted) entry.remove();
+      _showingToast = false;
+      _showNextToast();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Cold Reading',
+      navigatorKey: _navKey,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -3070,7 +3424,7 @@ class _ColdReadingAppState extends State<ColdReadingApp> {
   }
 }
 
-/// Two sections: the Cold Reading tree and the Memory Gym.
+/// Four tabs: the Cold Reading tree, Practice, the Memory Gym and Progress.
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key, required this.game});
   final GameState game;
@@ -3092,6 +3446,7 @@ class _HomeShellState extends State<HomeShell> {
           MindTreeScreen(game: widget.game),
           PracticeHubScreen(game: widget.game),
           MemoryGymScreen(game: widget.game),
+          ProgressScreen(game: widget.game),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -3115,6 +3470,11 @@ class _HomeShellState extends State<HomeShell> {
             icon: Icon(Icons.lightbulb_outline),
             selectedIcon: Icon(Icons.lightbulb),
             label: 'Memory',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.emoji_events_outlined),
+            selectedIcon: Icon(Icons.emoji_events),
+            label: 'Progress',
           ),
         ],
       ),
@@ -4363,6 +4723,8 @@ class _QuestScreenState extends State<QuestScreen> with SingleTickerProviderStat
                 challenge: challenge,
                 ipGain: _lastGain,
                 heartsLeft: game.hearts,
+                ratingDelta: game.lastRatingDelta,
+                rating: game.rating,
                 onContinue: _continueFromFeedback,
               ),
             ),
@@ -5109,8 +5471,12 @@ class FeedbackSheet extends StatelessWidget {
     required this.heartsLeft,
     required this.onContinue,
     this.practice = false,
+    this.ratingDelta,
+    this.rating,
   });
 
+  final int? ratingDelta;
+  final int? rating;
   final bool correct;
   final Challenge challenge;
   final int ipGain;
@@ -5180,9 +5546,20 @@ class FeedbackSheet extends StatelessWidget {
               ),
               const SizedBox(height: 10),
             ],
-            Text(
-              '${challenge.isClean ? '✅' : '🚩'} ${challenge.flag.label}',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    '${challenge.isClean ? '✅' : '🚩'} ${challenge.flag.label}',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14),
+                  ),
+                ),
+                if (ratingDelta != null && rating != null)
+                  Text(
+                    '${ratingDelta! >= 0 ? '▲ +' : '▼ '}$ratingDelta  ·  $rating',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 13),
+                  ),
+              ],
             ),
             const SizedBox(height: 6),
             ConstrainedBox(
@@ -8782,13 +9159,36 @@ enum PracticeMode {
   speed('Speed Round', '90 seconds. As many right answers as you can.', Icons.timer, Palette.orange),
   survival('Survival', 'Three strikes and you\'re out. It gets harder as you go.', Icons.local_fire_department, Palette.red),
   mistakes('Mistake Review', 'Replay the questions you got wrong until they stick.', Icons.replay, Palette.purple),
-  daily('Daily Case File', 'Five new cases every day. Bonus IP the first time.', Icons.folder_special, Palette.gold);
+  daily('Daily Case File', 'Five new cases every day. Bonus IP the first time.', Icons.folder_special, Palette.gold),
+  weakSpots('Weak Spot Training', 'Ten questions aimed at the skills you miss most.', Icons.healing, Palette.teal),
+  checkup('Checkup', '20 questions from every level. No feedback until the end. Your true score.', Icons.monitor_heart,
+      Palette.indigo);
 
   const PracticeMode(this.title, this.subtitle, this.icon, this.color);
   final String title;
   final String subtitle;
   final IconData icon;
   final Color color;
+}
+
+/// The Checkup: two questions from every level (one normal, one hard) plus
+/// four extra hard ones. Same shape every time, so scores compare fairly.
+List<Challenge> checkupSet(math.Random rng) {
+  final maxLevel = Curriculum.challenges.map((c) => c.level).reduce(math.max);
+  final picks = <Challenge>[];
+  for (var level = 1; level <= maxLevel; level++) {
+    for (final hard in <bool>[false, true]) {
+      var pool = Curriculum.challenges.where((c) => c.level == level && c.highLoad == hard).toList();
+      if (pool.isEmpty) pool = Curriculum.challenges.where((c) => c.level == level && !picks.contains(c)).toList();
+      if (pool.isEmpty) continue;
+      picks.add(pool[rng.nextInt(pool.length)]);
+    }
+  }
+  final extra = Curriculum.challenges.where((c) => c.level >= 2 && c.highLoad && !picks.contains(c)).toList()
+    ..shuffle(rng);
+  picks.addAll(extra.take(GameState.checkupLength - picks.length));
+  picks.sort((a, b) => a.level.compareTo(b.level));
+  return picks.map((c) => BaselineGenerator.live(c, rng).shuffled(rng)).toList();
 }
 
 class PracticeHubScreen extends StatefulWidget {
@@ -8826,6 +9226,12 @@ class _PracticeHubScreenState extends State<PracticeHubScreen> {
       PracticeMode.survival => best == 0 ? 'No score yet' : 'Best: $best correct',
       PracticeMode.mistakes => game.mistakes.isEmpty ? 'No mistakes saved' : '${game.mistakes.length} to review',
       PracticeMode.daily => game.dailyDoneDay == dayIndex() ? 'Done today ✓ (replay for practice)' : 'Ready',
+      PracticeMode.weakSpots => game.weakFlags().isEmpty
+          ? 'Mixed set until your weak spots show up'
+          : 'Focus: ${game.weakFlags().map((f) => f.label).join(', ')}',
+      PracticeMode.checkup => game.checkups.isEmpty
+          ? 'Not taken yet'
+          : 'Last: ${(100 * game.checkups.last[1] / game.checkups.last[2]).round()}%',
     };
   }
 
@@ -8925,7 +9331,7 @@ class _PracticeHubScreenState extends State<PracticeHubScreen> {
             const Text('QUICK MODES',
                 style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
             const SizedBox(height: 10),
-            for (final mode in PracticeMode.values)
+            for (final mode in PracticeMode.values.where((m) => m != PracticeMode.checkup))
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: Material(
@@ -9079,9 +9485,17 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
   Timer? _clock;
   bool _newBest = false;
   bool _bonusAwarded = false;
+  int _ratingBefore = 0;
+  final Map<ChallengeType, List<int>> _byType = <ChallengeType, List<int>>{};
+  final List<Challenge> _missed = <Challenge>[];
 
   GameState get game => widget.game;
   PracticeMode get mode => widget.mode;
+
+  bool get _fixedMode => switch (mode) {
+        PracticeMode.mistakes || PracticeMode.daily || PracticeMode.weakSpots || PracticeMode.checkup => true,
+        _ => false,
+      };
 
   @override
   void initState() {
@@ -9109,6 +9523,9 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
     _ipEarned = 0;
     _newBest = false;
     _bonusAwarded = false;
+    _ratingBefore = game.rating;
+    _byType.clear();
+    _missed.clear();
     _fixedIndex = 0;
     _fixed = switch (mode) {
       PracticeMode.mistakes => (game.mistakes
@@ -9118,6 +9535,8 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
           .toList()
         ..shuffle(_rng)),
       PracticeMode.daily => _dailySet(),
+      PracticeMode.weakSpots => _weakSet(),
+      PracticeMode.checkup => checkupSet(_rng),
       _ => <Challenge>[],
     };
     _clock?.cancel();
@@ -9129,7 +9548,7 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
         if (_secondsLeft <= 0) _finish();
       });
     }
-    if ((mode == PracticeMode.mistakes || mode == PracticeMode.daily) && _fixed.isEmpty) {
+    if (_fixedMode && _fixed.isEmpty) {
       _phase = _PracticePhase.over;
       return;
     }
@@ -9146,6 +9565,16 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
     return pool.take(5).map((c) => BaselineGenerator.live(c, seeded).shuffled(seeded)).toList();
   }
 
+  List<Challenge> _weakSet() {
+    final flags = game.weakFlags();
+    final maxLevel = game.highestUnlockedLevel;
+    final unlocked = Curriculum.challenges.where((c) => c.level <= maxLevel).toList()..shuffle(_rng);
+    final picks = unlocked.where((c) => flags.contains(c.flag)).take(10).toList();
+    picks.addAll(unlocked.where((c) => !picks.contains(c)).take(10 - picks.length));
+    picks.shuffle(_rng);
+    return picks.map((c) => BaselineGenerator.live(c, _rng).shuffled(_rng)).toList();
+  }
+
   Challenge _randomChallenge({required bool hard}) {
     final maxLevel = game.highestUnlockedLevel;
     var pool = Curriculum.challenges.where((c) => c.level <= maxLevel && c.highLoad == hard).toList();
@@ -9159,7 +9588,8 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
           BaselineGenerator.generate(_rng, hard: _streak >= 5 && _rng.nextBool()).shuffled(_rng),
         PracticeMode.speed => _randomChallenge(hard: _rng.nextDouble() < 0.3),
         PracticeMode.survival => _randomChallenge(hard: _rng.nextDouble() < math.min(0.85, _score * 0.07)),
-        PracticeMode.mistakes || PracticeMode.daily => _fixed[_fixedIndex],
+        PracticeMode.mistakes || PracticeMode.daily || PracticeMode.weakSpots || PracticeMode.checkup =>
+          _fixed[_fixedIndex],
       };
 
   bool get _canCheck => _phase == _PracticePhase.answering && _selection.length == _current.requiredSelections;
@@ -9189,6 +9619,10 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
     game.recordPractice(_current, correct: correct, ip: ip);
     _ipEarned += ip;
     _answered++;
+    final tally = _byType.putIfAbsent(_current.type, () => <int>[0, 0]);
+    tally[0]++;
+    if (correct) tally[1]++;
+    if (!correct) _missed.add(_current);
     if (correct) {
       _score++;
       _streak++;
@@ -9198,6 +9632,10 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
       _streak = 0;
       _strikes++;
       HapticFeedback.heavyImpact();
+    }
+    if (mode == PracticeMode.checkup) {
+      _advance();
+      return;
     }
     if (mode == PracticeMode.speed) {
       setState(() {
@@ -9224,7 +9662,7 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
   }
 
   void _advance() {
-    final fixedMode = mode == PracticeMode.mistakes || mode == PracticeMode.daily;
+    final fixedMode = _fixedMode;
     if (mode == PracticeMode.survival && _strikes >= survivalStrikes) {
       _finish();
       return;
@@ -9254,7 +9692,10 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
     }
     if (mode == PracticeMode.daily) {
       _bonusAwarded = game.completeDaily(dailyBonus);
+    } else if (mode == PracticeMode.checkup && _answered == _fixed.length) {
+      game.recordCheckup(_score, _fixed.length);
     } else {
+      if (mode == PracticeMode.weakSpots && _answered == _fixed.length) game.bumpMission(MissionKind.weak);
       game.touchPracticeStreak();
     }
     setState(() => _phase = _PracticePhase.over);
@@ -9294,6 +9735,7 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
       PracticeMode.survival => '${'❤️' * (survivalStrikes - _strikes)}${'🖤' * _strikes} · $_score',
       PracticeMode.mistakes => '${math.min(_fixedIndex + 1, _fixed.length)}/${_fixed.length}',
       PracticeMode.daily => 'Case ${math.min(_fixedIndex + 1, _fixed.length)}/${_fixed.length}',
+      PracticeMode.weakSpots || PracticeMode.checkup => '${math.min(_fixedIndex + 1, _fixed.length)}/${_fixed.length}',
     };
   }
 
@@ -9377,7 +9819,7 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
                 child: ChunkyButton(
                   label: _current.isMultiSelect && _selection.length < _current.requiredSelections
                       ? 'Select ${_current.requiredSelections - _selection.length} more'
-                      : 'Check answer',
+                      : (mode == PracticeMode.checkup ? 'Lock in answer' : 'Check answer'),
                   color: mode.color,
                   onPressed: _canCheck ? _check : null,
                 ),
@@ -9397,6 +9839,8 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
                 ipGain: _lastCorrect ? 3 : 0,
                 heartsLeft: 0,
                 practice: true,
+                ratingDelta: game.lastRatingDelta,
+                rating: game.rating,
                 onContinue: _continue,
               ),
             ),
@@ -9405,7 +9849,122 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
     );
   }
 
+  Widget _buildCheckupOver() {
+    final total = _fixed.length;
+    final complete = _answered == total;
+    final pct = _answered == 0 ? 0 : (100 * _score / _answered).round();
+    final history = game.checkups;
+    final previous = complete && history.length >= 2 ? history[history.length - 2] : null;
+    final prevPct = previous == null ? null : (100 * previous[1] / previous[2]).round();
+    final first = game.firstCheckupPct;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+      children: <Widget>[
+        const Center(child: Text('🩺', style: TextStyle(fontSize: 64))),
+        const SizedBox(height: 8),
+        Text(
+          complete ? 'Checkup complete' : 'Checkup stopped early',
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Palette.textPrimary, fontSize: 26, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '$_score / $_answered right · $pct%',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: pct >= 80 ? Palette.green : (pct >= 60 ? Palette.gold : Palette.orange),
+            fontSize: 22,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        if (!complete)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text(
+              'Only finished checkups are saved to your history.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Palette.textMuted),
+            ),
+          ),
+        const SizedBox(height: 16),
+        if (complete)
+          Row(
+            children: <Widget>[
+              Expanded(child: _MiniStat(label: 'First ever', value: first == null ? '–' : '$first%')),
+              const SizedBox(width: 8),
+              Expanded(child: _MiniStat(label: 'Last time', value: prevPct == null ? '–' : '$prevPct%')),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _MiniStat(
+                  label: 'Change',
+                  value: first == null || history.length < 2 ? 'new' : '${pct - first >= 0 ? '+' : ''}${pct - first}',
+                  color: first != null && pct >= first ? Palette.green : Palette.orange,
+                ),
+              ),
+            ],
+          ),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Palette.surface,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Palette.border, width: 1.5),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const Text('BY SKILL',
+                  style: TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+              const SizedBox(height: 8),
+              for (final t in ChallengeType.values)
+                if (_byType[t] != null) _BreakdownLine(label: t.label, value: '${_byType[t]![1]}/${_byType[t]![0]}'),
+              _BreakdownLine(
+                label: 'Reader Rating',
+                value: '${game.rating - _ratingBefore >= 0 ? '+' : ''}${game.rating - _ratingBefore} → ${game.rating}',
+              ),
+              if (complete) const _BreakdownLine(label: 'Checkup bonus', value: '+${GameState.checkupBonus} IP'),
+            ],
+          ),
+        ),
+        if (_missed.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 18),
+          Text('WHAT YOU MISSED (${_missed.length})',
+              style: const TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+          const SizedBox(height: 8),
+          for (final c in _missed)
+            Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Palette.surface,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Palette.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text('${c.isClean ? '✅' : '🚩'} ${c.flag.label} · Level ${c.level}',
+                      style: const TextStyle(color: Palette.indigo, fontWeight: FontWeight.w800, fontSize: 12.5)),
+                  const SizedBox(height: 4),
+                  Text(c.prompt, style: const TextStyle(color: Palette.textPrimary, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  Text('Answer: ${c.correctAnswerText}',
+                      style: const TextStyle(color: Palette.green, fontWeight: FontWeight.w700, height: 1.3)),
+                  const SizedBox(height: 4),
+                  Text(c.insight, style: const TextStyle(color: Palette.textMuted, fontSize: 13, height: 1.35)),
+                ],
+              ),
+            ),
+        ],
+        const SizedBox(height: 12),
+        ChunkyButton(label: 'Done', color: Palette.indigo, onPressed: () => Navigator.of(context).pop()),
+      ],
+    );
+  }
+
   Widget _buildOver() {
+    if (mode == PracticeMode.checkup) return _buildCheckupOver();
     final best = game.practiceBest[mode.name] ?? 0;
     final headline = switch (mode) {
       PracticeMode.baselineLab => 'Best streak this run: $_bestStreak',
@@ -9413,6 +9972,8 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
       PracticeMode.survival => 'You survived $_score questions',
       PracticeMode.mistakes => '$_score of $_answered fixed',
       PracticeMode.daily => '$_score of ${_fixed.length} cases solved',
+      PracticeMode.weakSpots => '$_score of $_answered right on your weak spots',
+      PracticeMode.checkup => '$_score of $_answered right',
     };
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
@@ -9439,6 +10000,10 @@ class _PracticeScreenState extends State<PracticeScreen> with SingleTickerProvid
             child: Column(
               children: <Widget>[
                 _BreakdownLine(label: 'Insight Points', value: '+${_ipEarned + (_bonusAwarded ? dailyBonus : 0)} IP'),
+                _BreakdownLine(
+                  label: 'Reader Rating',
+                  value: '${game.rating - _ratingBefore >= 0 ? '+' : ''}${game.rating - _ratingBefore} → ${game.rating}',
+                ),
                 if (_bonusAwarded) const _BreakdownLine(label: 'Daily case bonus', value: '+$dailyBonus IP'),
                 if (mode == PracticeMode.speed || mode == PracticeMode.survival || mode == PracticeMode.baselineLab)
                   _BreakdownLine(label: 'Personal best', value: '$best'),
@@ -12692,6 +13257,744 @@ class _MiniCard extends StatelessWidget {
           Text(card.rank, style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.w900, height: 1)),
           Expanded(child: Center(child: Text(card.suit, style: TextStyle(color: color, fontSize: 30)))),
         ],
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PROGRESS TAB: rank, daily missions, checkups, weak spots, records, badges
+// ════════════════════════════════════════════════════════════════════════════
+
+class ProgressScreen extends StatefulWidget {
+  const ProgressScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<ProgressScreen> createState() => _ProgressScreenState();
+}
+
+class _ProgressScreenState extends State<ProgressScreen> {
+  GameState get game => widget.game;
+
+  @override
+  void initState() {
+    super.initState();
+    game.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    game.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _openMode(PracticeMode mode) {
+    HapticFeedback.selectionClick();
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => PracticeScreen(game: game, mode: mode)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: SafeArea(
+        bottom: false,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        'Progress',
+                        style: TextStyle(color: Palette.textPrimary, fontSize: 26, fontWeight: FontWeight.w900),
+                      ),
+                      SizedBox(height: 4),
+                      Text('Proof you\'re getting better.', style: TextStyle(color: Palette.textMuted, fontSize: 14)),
+                    ],
+                  ),
+                ),
+                StatPill(emoji: '💡', label: '${game.insightPoints} IP', color: Palette.blue, tooltip: 'Insight Points'),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _RankCard(game: game),
+            const SizedBox(height: 14),
+            _MissionsCard(game: game),
+            const SizedBox(height: 14),
+            _CheckupCard(game: game, onStart: () => _openMode(PracticeMode.checkup)),
+            const SizedBox(height: 14),
+            _WeakSpotsCard(game: game, onTrain: () => _openMode(PracticeMode.weakSpots)),
+            const SizedBox(height: 14),
+            _MemoryRecordsCard(game: game),
+            const SizedBox(height: 14),
+            _BadgesCard(game: game),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Panel extends StatelessWidget {
+  const _Panel({required this.title, required this.child, this.trailing, this.color = Palette.border});
+  final String title;
+  final Widget child;
+  final String? trailing;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Palette.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: color, width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                      color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2),
+                ),
+              ),
+              if (trailing != null)
+                Text(trailing!, style: const TextStyle(color: Palette.textPrimary, fontWeight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _Bar extends StatelessWidget {
+  const _Bar({required this.value, required this.color, this.height = 8});
+  final double value;
+  final Color color;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(height),
+      child: LinearProgressIndicator(
+        value: value.clamp(0.0, 1.0),
+        minHeight: height,
+        backgroundColor: Palette.surfaceHigh,
+        valueColor: AlwaysStoppedAnimation<Color>(color),
+      ),
+    );
+  }
+}
+
+class _RankCard extends StatelessWidget {
+  const _RankCard({required this.game});
+  final GameState game;
+
+  void _showRanks(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Palette.surface,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const Text('Ranks', style: TextStyle(color: Palette.textPrimary, fontSize: 22, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 4),
+              const Text(
+                'Every lie-reading answer moves your Reader Rating. Getting a hard question right moves it up a lot; '
+                'missing an easy one drops it. Easy questions stop helping once you\'re good, so the high ranks need '
+                'the high levels.',
+                style: TextStyle(color: Palette.textMuted, height: 1.4),
+              ),
+              const SizedBox(height: 12),
+              for (final r in ReaderRank.values)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: Row(
+                    children: <Widget>[
+                      Text(r.emoji, style: const TextStyle(fontSize: 26)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Text(
+                              r.title,
+                              style: TextStyle(
+                                color: r == game.rank ? Palette.gold : Palette.textPrimary,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            Text(r.blurb, style: const TextStyle(color: Palette.textMuted, fontSize: 12.5)),
+                          ],
+                        ),
+                      ),
+                      Text(
+                        r.minRating == 0 ? 'start' : '${r.minRating}',
+                        style: TextStyle(
+                          color: game.peakRating >= r.minRating ? Palette.green : Palette.textMuted,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final r = game.rank;
+    final next = r.next;
+    final today = dayIndex();
+    final weekDelta = game.rating - game.ratingOn(today - 7);
+    final progress = next == null ? 1.0 : (game.rating - r.minRating) / (next.minRating - r.minRating);
+    final points = <int>[];
+    if (game.ratingLog.isNotEmpty) {
+      final firstDay = game.ratingLog.keys.reduce(math.min);
+      for (var d = math.max(today - 29, firstDay); d <= today; d++) {
+        points.add(game.ratingOn(d));
+      }
+    }
+    return Material(
+      color: Palette.indigo.withAlpha(30),
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () => _showRanks(context),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Palette.indigo.withAlpha(160), width: 1.5),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  Text(r.emoji, style: const TextStyle(fontSize: 46)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        const Text('READER RANK',
+                            style: TextStyle(
+                                color: Palette.indigo, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+                        Text(r.title,
+                            style: const TextStyle(color: Palette.textPrimary, fontSize: 22, fontWeight: FontWeight.w900)),
+                        Text(r.blurb, style: const TextStyle(color: Palette.textMuted, fontSize: 12.5)),
+                      ],
+                    ),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: <Widget>[
+                      Text('${game.rating}',
+                          style: const TextStyle(color: Palette.textPrimary, fontSize: 28, fontWeight: FontWeight.w900)),
+                      Text(
+                        weekDelta == 0 ? 'this week: –' : 'this week: ${weekDelta > 0 ? '+' : ''}$weekDelta',
+                        style: TextStyle(
+                          color: weekDelta > 0 ? Palette.green : (weekDelta < 0 ? Palette.orange : Palette.textMuted),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _Bar(value: progress, color: Palette.indigo, height: 10),
+              const SizedBox(height: 6),
+              Text(
+                next == null
+                    ? 'Top rank reached. Keep it there.'
+                    : '${next.minRating - game.rating} points to ${next.emoji} ${next.title}',
+                style: const TextStyle(color: Palette.textPrimary, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 110,
+                child: points.length < 2
+                    ? const Center(
+                        child: Text(
+                          'Answer questions on a couple of days to see your rating line.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Palette.textMuted, fontSize: 12.5),
+                        ),
+                      )
+                    : CustomPaint(painter: _RatingChartPainter(points), size: Size.infinite),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Tap to see all ranks. Hard questions count more than easy ones.',
+                style: TextStyle(color: Palette.textMuted, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RatingChartPainter extends CustomPainter {
+  _RatingChartPainter(this.points);
+  final List<int> points;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final lo = points.reduce(math.min) - 20;
+    final hi = points.reduce(math.max) + 20;
+    final span = math.max(1, hi - lo);
+    const labelWidth = 34.0;
+    final w = size.width - labelWidth;
+    Offset at(int i) => Offset(
+          labelWidth + (points.length == 1 ? w : w * i / (points.length - 1)),
+          size.height - size.height * (points[i] - lo) / span,
+        );
+
+    final grid = Paint()
+      ..color = Palette.border
+      ..strokeWidth = 1;
+    canvas.drawLine(Offset(labelWidth, 0), Offset(size.width, 0), grid);
+    canvas.drawLine(Offset(labelWidth, size.height), Offset(size.width, size.height), grid);
+    void label(String text, double y) {
+      final tp = TextPainter(
+        text: TextSpan(text: text, style: const TextStyle(color: Palette.textMuted, fontSize: 10)),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(0, (y - tp.height / 2).clamp(0.0, size.height - tp.height)));
+    }
+
+    label('$hi', 0);
+    label('$lo', size.height);
+
+    final line = Path()..moveTo(at(0).dx, at(0).dy);
+    for (var i = 1; i < points.length; i++) {
+      line.lineTo(at(i).dx, at(i).dy);
+    }
+    final fill = Path.from(line)
+      ..lineTo(at(points.length - 1).dx, size.height)
+      ..lineTo(at(0).dx, size.height)
+      ..close();
+    canvas.drawPath(fill, Paint()..color = Palette.indigo.withAlpha(40));
+    canvas.drawPath(
+      line,
+      Paint()
+        ..color = Palette.indigo
+        ..strokeWidth = 2.5
+        ..style = PaintingStyle.stroke
+        ..strokeJoin = StrokeJoin.round,
+    );
+    canvas.drawCircle(at(points.length - 1), 4.5, Paint()..color = Palette.gold);
+  }
+
+  @override
+  bool shouldRepaint(_RatingChartPainter old) => !listEquals(old.points, points);
+}
+
+class _MissionsCard extends StatelessWidget {
+  const _MissionsCard({required this.game});
+  final GameState game;
+
+  @override
+  Widget build(BuildContext context) {
+    final missions = game.todaysMissions;
+    final done = missions.where(game.missionDone).length;
+    return _Panel(
+      title: 'TODAY\'S MISSIONS',
+      trailing: '$done/3',
+      color: done == 3 ? Palette.gold : Palette.border,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          for (final m in missions)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: <Widget>[
+                  Text(m.emoji, style: const TextStyle(fontSize: 24)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          m.title,
+                          style: TextStyle(
+                            color: game.missionDone(m) ? Palette.green : Palette.textPrimary,
+                            fontWeight: FontWeight.w800,
+                            decoration: game.missionDone(m) ? TextDecoration.lineThrough : null,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        _Bar(value: game.missionCount(m) / m.target, color: game.missionDone(m) ? Palette.green : Palette.gold),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    game.missionDone(m) ? '✓' : '${game.missionCount(m)}/${m.target}',
+                    style: TextStyle(
+                      color: game.missionDone(m) ? Palette.green : Palette.textMuted,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Text(
+            done == 3
+                ? 'All done today. New missions tomorrow.'
+                : '+${GameState.missionReward} IP each · +${GameState.allMissionsBonus} IP bonus for all three',
+            style: const TextStyle(color: Palette.textMuted, fontSize: 12.5),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CheckupCard extends StatelessWidget {
+  const _CheckupCard({required this.game, required this.onStart});
+  final GameState game;
+  final VoidCallback onStart;
+
+  @override
+  Widget build(BuildContext context) {
+    final history = game.checkups;
+    final recent = history.length > 10 ? history.sublist(history.length - 10) : history;
+    final daysSince = history.isEmpty ? null : dayIndex() - history.last[0];
+    final due = daysSince == null || daysSince >= 7;
+    int pct(List<int> c) => (100 * c[1] / c[2]).round();
+    return _Panel(
+      title: 'WEEKLY CHECKUP',
+      trailing: due ? 'Due now' : 'Next in ${7 - daysSince!}d',
+      color: due ? Palette.indigo : Palette.border,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const Text(
+            '20 questions from all 8 levels, including ones you haven\'t reached yet. No hints or feedback until the '
+            'end. Take it once a week: if your score climbs, you\'re getting better.',
+            style: TextStyle(color: Palette.textPrimary, fontSize: 13.5, height: 1.4),
+          ),
+          if (history.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 12),
+            Row(
+              children: <Widget>[
+                Expanded(child: _MiniStat(label: 'First', value: '${game.firstCheckupPct}%')),
+                const SizedBox(width: 8),
+                Expanded(child: _MiniStat(label: 'Best', value: '${game.bestCheckupPct}%', color: Palette.gold)),
+                const SizedBox(width: 8),
+                Expanded(child: _MiniStat(label: 'Latest', value: '${pct(history.last)}%')),
+              ],
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 90,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: <Widget>[
+                  for (final c in recent)
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 3),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: <Widget>[
+                            Text('${pct(c)}', style: const TextStyle(color: Palette.textMuted, fontSize: 10.5)),
+                            const SizedBox(height: 2),
+                            Container(
+                              height: math.max(4, 66 * pct(c) / 100).toDouble(),
+                              decoration: BoxDecoration(
+                                color: c == history.last ? Palette.indigo : Palette.indigo.withAlpha(120),
+                                borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          ChunkyButton(
+            label: history.isEmpty ? 'Take your first Checkup' : 'Take the Checkup',
+            color: Palette.indigo,
+            onPressed: onStart,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WeakSpotsCard extends StatelessWidget {
+  const _WeakSpotsCard({required this.game, required this.onTrain});
+  final GameState game;
+  final VoidCallback onTrain;
+
+  @override
+  Widget build(BuildContext context) {
+    final weak = game.weakFlags();
+    return _Panel(
+      title: 'WEAK SPOTS',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          if (weak.isEmpty)
+            const Text(
+              'Nothing stands out yet. Keep answering and the skills you miss most will show up here.',
+              style: TextStyle(color: Palette.textMuted, height: 1.4),
+            )
+          else
+            for (final f in weak)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(f.label,
+                              style: const TextStyle(color: Palette.textPrimary, fontWeight: FontWeight.w800)),
+                        ),
+                        Text(
+                          '${(100 * (game.flagAttempts[f]! - game.flagMisses[f]!) / game.flagAttempts[f]!).round()}% '
+                          'of ${game.flagAttempts[f]}',
+                          style: const TextStyle(color: Palette.orange, fontWeight: FontWeight.w800),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    _Bar(
+                      value: (game.flagAttempts[f]! - game.flagMisses[f]!) / game.flagAttempts[f]!,
+                      color: Palette.orange,
+                    ),
+                  ],
+                ),
+              ),
+          const SizedBox(height: 4),
+          ChunkyButton(label: 'Train weak spots', color: Palette.teal, onPressed: onTrain),
+        ],
+      ),
+    );
+  }
+}
+
+class _MemoryRecordsCard extends StatelessWidget {
+  const _MemoryRecordsCard({required this.game});
+  final GameState game;
+
+  static const Map<MemoryDrill, int> _typical = <MemoryDrill, int>{MemoryDrill.digits: 7, MemoryDrill.words: 7};
+
+  @override
+  Widget build(BuildContext context) {
+    final drills = MemoryDrill.values.where((d) => d.leveled).toList();
+    return _Panel(
+      title: 'MEMORY RECORDS',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          for (final d in drills)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: <Widget>[
+                  Icon(d.icon, color: d.color, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        Row(
+                          children: <Widget>[
+                            Expanded(
+                              child: Text(d.title,
+                                  style: const TextStyle(color: Palette.textPrimary, fontWeight: FontWeight.w800)),
+                            ),
+                            Text(
+                              game.memory.best[d] == 0 ? 'no record' : 'best ${d.levelLabel(game.memory.best[d]!)}',
+                              style: TextStyle(color: d.color, fontWeight: FontWeight.w800, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        _Bar(value: game.memory.best[d]! / d.maxLevel, color: d.color),
+                        if (_typical[d] != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              'Most people: about ${_typical[d]} ${d.unit}. Max here: ${d.maxLevel}.',
+                              style: const TextStyle(color: Palette.textMuted, fontSize: 11.5),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Text(
+            '${game.memory.learnedCards()}/${MemoryContent.cards.length} study cards learned',
+            style: const TextStyle(color: Palette.textMuted, fontSize: 12.5),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BadgesCard extends StatelessWidget {
+  const _BadgesCard({required this.game});
+  final GameState game;
+
+  @override
+  Widget build(BuildContext context) {
+    final all = Achievement.all;
+    return _Panel(
+      title: 'BADGES',
+      trailing: '${all.where((a) => game.achievements.contains(a.id)).length}/${all.length}',
+      child: GridView.count(
+        crossAxisCount: 4,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+        childAspectRatio: 0.78,
+        children: <Widget>[
+          for (final a in all)
+            _BadgeTile(achievement: a, earned: game.achievements.contains(a.id)),
+        ],
+      ),
+    );
+  }
+}
+
+class _BadgeTile extends StatelessWidget {
+  const _BadgeTile({required this.achievement, required this.earned});
+  final Achievement achievement;
+  final bool earned;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(
+            backgroundColor: Palette.surfaceHigh,
+            content: Text(
+              '${achievement.emoji} ${achievement.title}: ${achievement.description}${earned ? ' ✓ Earned' : ''}',
+              style: const TextStyle(color: Palette.textPrimary),
+            ),
+          ));
+      },
+      child: Container(
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: earned ? Palette.gold.withAlpha(30) : Palette.surfaceHigh,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: earned ? Palette.gold.withAlpha(160) : Palette.border),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Opacity(
+              opacity: earned ? 1 : 0.25,
+              child: Text(achievement.emoji, style: const TextStyle(fontSize: 26)),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              earned ? achievement.title : '🔒 ${achievement.title}',
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: earned ? Palette.textPrimary : Palette.textMuted,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+                height: 1.15,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Pop-up at the top of the screen for badges, missions and rank-ups.
+class _ToastBanner extends StatelessWidget {
+  const _ToastBanner({required this.text});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      top: MediaQuery.paddingOf(context).top + 8,
+      left: 16,
+      right: 16,
+      child: IgnorePointer(
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: 0, end: 1),
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutBack,
+          builder: (context, v, child) => Transform.translate(
+            offset: Offset(0, -40 * (1 - v)),
+            child: Opacity(opacity: v.clamp(0.0, 1.0), child: child),
+          ),
+          child: Material(
+            color: Palette.surfaceHigh,
+            elevation: 10,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Palette.gold, width: 1.5),
+              ),
+              child: Text(
+                text,
+                style: const TextStyle(color: Palette.textPrimary, fontSize: 15, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
