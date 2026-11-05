@@ -47,8 +47,12 @@ Or paste `lib/main.dart` into any new Flutter project.
 6. **Truth Signals:** what real memories sound like versus credibility pitches.
 7. **Interview Tactics:** choose the best next question or move.
 8. **Digital Deception:** tells in texts, emails, reviews and DMs.
+9. **Checkable Details:** truth comes with names, places and receipts; lies hide the key part where nobody can check.
+10. **Making Lies Hard Work:** backwards stories, unexpected questions, and holding back your evidence.
+11. **Myths & False Alarms:** eye direction, nose touching, crossed arms, and the Othello error.
+12. **Deduction & Cold Reading:** combine small clues like Patrick Jane, and learn how "psychics" fake it.
 
-Each course has 2 lessons and an adaptive review; a final exam covers everything.
+Each course has 2 lessons (6 questions each) and an adaptive review (7); the final exam (12) covers everything.
 
 Baseline and statement questions always offer **"Nothing here"**, and some cases are
 genuinely truthful, so you practice not crying wolf as well as catching lies.
@@ -107,11 +111,11 @@ The fourth tab shows whether you're actually getting better.
   → Human Lie Detector (1700). The answer sheet shows the change after each answer.
 - **Daily missions.** Three a day (one lie-reading, one memory, one other).
   +15 IP each, +40 for all three.
-- **Weekly Checkup.** 20 questions, two from every level plus four hard extras,
+- **Weekly Checkup.** 24 questions, one normal and one hard from each of the 12 levels,
   no feedback until the end. Same shape every time, so scores compare fairly.
   Shows first / best / latest and what you missed.
 - **Weak Spot Training.** Ten questions aimed at your three least accurate skills.
-- **Memory records** and **37 badges**. Badges, missions and rank-ups pop up at
+- **Memory records** and **39 badges**. Badges, missions and rank-ups pop up at
   the top of the screen when you earn them.
 
 ## Game rules
