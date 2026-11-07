@@ -794,7 +794,8 @@ class Curriculum {
       var i = 0;
       for (final c in challenges.where((c) => c.level == info.number)) {
         if (flagsA == null) {
-          (i++.isEven ? a : b).add(c);
+          (i.isEven ? a : b).add(c);
+          i++;
         } else if (c.isClean) {
           clean.add(c);
         } else {
