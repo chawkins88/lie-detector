@@ -100,6 +100,17 @@ about 5 minutes covers spaced review, Number Span and a rotating drill of the da
 
 Progress (both tabs) is saved on the phone with `shared_preferences`; nothing leaves the device.
 
+## Deduction Lab & Poker Face
+
+On the Practice tab.
+
+- **Deduction Lab:** read someone's job from clues, Patrick Jane style. Two lessons
+  (how Jane does it; what to look at), endless Case Files (20 jobs, 100 clues, one
+  decoy per case), and a People Watching log for real-life guesses.
+- **Poker Face:** bluffing for games (Two Truths & a Lie, poker, Werewolf, Among Us,
+  surprise parties). Two lessons, a "Which Sounds True?" drill, and a tracker for how
+  often you fool your friends.
+
 ## Poker School
 
 On the Memory tab, below the Blackjack Table.
@@ -130,7 +141,7 @@ The fourth tab shows whether you're actually getting better.
   no feedback until the end. Same shape every time, so scores compare fairly.
   Shows first / best / latest and what you missed.
 - **Weak Spot Training.** Ten questions aimed at your three least accurate skills.
-- **Memory records** and **41 badges**. Badges, missions and rank-ups pop up at
+- **Memory records** and **43 badges**. Badges, missions and rank-ups pop up at
   the top of the screen when you earn them.
 
 ## Game rules

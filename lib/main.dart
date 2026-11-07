@@ -3583,6 +3583,48 @@ class GameState extends ChangeNotifier {
     return best;
   }
 
+  /// Deduction Lab real-life guesses: [guesses, right, close].
+  final List<int> deduceStats = <int>[0, 0, 0];
+
+  /// Poker Face real-life rounds: friend → [rounds, fooled them].
+  final Map<String, List<int>> bluffStats = <String, List<int>>{};
+
+  /// Best scores in the Deduction Lab and Poker Face drills.
+  final Map<String, int> labBest = <String, int>{};
+  static const int labIp = 2;
+
+  /// [result]: 0 wrong, 1 close (right field), 2 right.
+  void recordDeduction(int result) {
+    deduceStats[0]++;
+    if (result == 2) deduceStats[1]++;
+    if (result == 1) deduceStats[2]++;
+    if (result > 0) insightPoints += 3;
+    _touchStreak();
+    _changed();
+  }
+
+  void recordBluff(String friend, {required bool fooled}) {
+    final s = bluffStats.putIfAbsent(friend, () => <int>[0, 0]);
+    s[0]++;
+    if (fooled) {
+      s[1]++;
+      insightPoints += 5;
+    }
+    _touchStreak();
+    _changed();
+  }
+
+  /// Returns true for a new best on that drill.
+  bool reportLab(String key, int score) {
+    insightPoints += score * labIp;
+    final best = score > (labBest[key] ?? -1);
+    if (best) labBest[key] = score;
+    _bump(MissionKind.lab);
+    _touchStreak();
+    _changed();
+    return best;
+  }
+
   /// Practice hub: best scores, questions to review, daily case.
   final Map<String, int> practiceBest = <String, int>{};
   final Set<String> mistakes = <String>{};
@@ -4041,6 +4083,9 @@ class GameState extends ChangeNotifier {
         'missionsAll': missionsAllDoneDays,
         'achievements': achievements.toList(),
         'poker': pokerStats,
+        'deduce': deduceStats,
+        'bluff': bluffStats,
+        'labBest': labBest,
         'pokerBest': pokerBest,
       };
 
@@ -4125,6 +4170,21 @@ class GameState extends ChangeNotifier {
       final hadBadges = ach is List;
       if (ach is List) achievements.addAll(ach.whereType<String>());
       _introBadges = !hadBadges && totalAnswered > 0;
+      final dd = data['deduce'];
+      if (dd is List && dd.length == 3 && dd.every((v) => v is int)) {
+        for (var i = 0; i < 3; i++) {
+          deduceStats[i] = dd[i] as int;
+        }
+      }
+      final bl = data['bluff'];
+      if (bl is Map) {
+        bl.forEach((Object? k, Object? v) {
+          if (k is String && v is List && v.length == 2 && v[0] is int && v[1] is int) {
+            bluffStats[k] = <int>[v[0] as int, v[1] as int];
+          }
+        });
+      }
+      _readCounts(data['labBest'], labBest, const <String, String>{'deduce': 'deduce', 'convince': 'convince'});
       final pk = data['poker'];
       if (pk is List && pk.length == 4 && pk.every((v) => v is int)) {
         for (var i = 0; i < 4; i++) {
@@ -4230,7 +4290,8 @@ enum MissionKind {
   consultant('Get a confession in The Consultant', '🕵️', 1, 2),
   hands('Play 5 blackjack hands', '♠️', 5, 2),
   poker('Play 5 poker hands', '♣️', 5, 2),
-  weak('Finish a Weak Spot Training run', '🩹', 1, 2);
+  weak('Finish a Weak Spot Training run', '🩹', 1, 2),
+  lab('Finish a Deduction Lab or Poker Face drill', '🔍', 1, 2);
 
   const MissionKind(this.title, this.emoji, this.target, this.group);
   final String title;
@@ -4308,6 +4369,10 @@ class Achievement {
     Achievement('case1', '🔎', 'First Confession', 'Solve a Consultant case.', (g) => g.caseStars.values.any((s) => s > 0)),
     Achievement('allcases', '⭐', 'Patrick Would Be Proud', 'Get 3 stars on every Consultant case.',
         (g) => ConsultantCases.all.every((c) => (g.caseStars[c.id] ?? 0) >= 3)),
+    Achievement('deducer', '🔍', 'Like Patrick Jane', 'Score 9/10 or better in Deduction Lab Case Files.',
+        (g) => (g.labBest['deduce'] ?? 0) >= 9),
+    Achievement('pokerface', '😐', 'Poker Face', 'Fool your friends 10 times in Two Truths & a Lie.',
+        (g) => g.bluffStats.values.fold<int>(0, (a, s) => a + s[1]) >= 10),
     Achievement('reallife10', '🎭', 'Party Trick', 'Play 10 rounds of Two Truths & a Lie.',
         (g) => g.realLifeStats.values.fold<int>(0, (a, s) => a + s[0]) >= 10),
   ];
@@ -10453,6 +10518,29 @@ class _PracticeHubScreenState extends State<PracticeHubScreen> {
                 MaterialPageRoute<void>(builder: (_) => const LieScienceScreen()),
               ),
             ),
+            _BigModeCard(
+              emoji: '🔍',
+              title: 'Deduction Lab',
+              subtitle: 'Read people\'s jobs from their hands, shoes and habits, like Patrick Jane.',
+              status: game.labBest['deduce'] == null ? 'New' : 'Best: ${game.labBest['deduce']}/10 cases',
+              color: Palette.teal,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => DeductionLabScreen(game: game)),
+              ),
+            ),
+            _BigModeCard(
+              emoji: '😐',
+              title: 'Poker Face',
+              subtitle: 'Bluff convincingly in games: Two Truths & a Lie, poker, Werewolf, surprise parties.',
+              status: game.bluffStats.isEmpty
+                  ? 'New'
+                  : 'Fooled friends ${game.bluffStats.values.fold<int>(0, (a, s) => a + s[1])}/'
+                      '${game.bluffStats.values.fold<int>(0, (a, s) => a + s[0])} times',
+              color: Palette.orange,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => PokerFaceScreen(game: game)),
+              ),
+            ),
             Container(
               margin: const EdgeInsets.only(bottom: 12),
               padding: const EdgeInsets.all(14),
@@ -16302,6 +16390,927 @@ class _PokerTableScreenState extends State<PokerTableScreen> {
           ),
           actions,
         ],
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  DEDUCTION LAB & POKER FACE: reading jobs from clues, bluffing for games
+// ════════════════════════════════════════════════════════════════════════════
+
+/// One observable clue and what it points to.
+class JobClue {
+  const JobClue(this.clue, this.why);
+  final String clue;
+  final String why;
+}
+
+class JobProfile {
+  const JobProfile(this.name, this.emoji, this.group, this.clues);
+  final String name;
+  final String emoji;
+
+  /// Jobs in the same group look alike, so they make the hardest wrong answers.
+  final String group;
+  final List<JobClue> clues;
+}
+
+class Deduction {
+  Deduction._();
+
+  static const List<JobProfile> jobs = <JobProfile>[
+    JobProfile('Nurse', '🩺', 'medical', <JobClue>[
+      JobClue('Wears thick cushioned clogs', 'on their feet for 12-hour shifts'),
+      JobClue('Knuckles are red and dry', 'washing and sanitizing hands dozens of times a day'),
+      JobClue('Checks a watch with a second hand', 'counting pulses and timing medicine'),
+      JobClue('Talks calmly about a gross injury while eating', 'used to blood and worse'),
+      JobClue('Mentions sleeping during the day', 'night shifts'),
+    ]),
+    JobProfile('Dentist', '🦷', 'medical', <JobClue>[
+      JobClue('Has very short, spotless fingernails', 'hands in people\'s mouths all day'),
+      JobClue('Leans forward with a slight hunch', 'bending over patients for hours'),
+      JobClue('Glances at your teeth when you smile', 'a professional habit that\'s hard to switch off'),
+      JobClue('Has a faint dent on the bridge of the nose', 'magnifying glasses worn for close work'),
+      JobClue('Brings up flossing without being asked', 'says it a hundred times a week'),
+    ]),
+    JobProfile('Vet tech', '🐾', 'medical', <JobClue>[
+      JobClue('Dog and cat hair all over dark pants', 'handles animals all day'),
+      JobClue('Small healed scratches on the forearms', 'nervous cats and dogs'),
+      JobClue('Smells faintly of disinfectant', 'cleaning exam rooms between patients'),
+      JobClue('Names a dog\'s breed instantly, even a mix', 'sees dozens of breeds a week'),
+      JobClue('Isn\'t bothered by a dog jumping on them', 'used to it, and knows how to calm them'),
+    ]),
+    JobProfile('Chef', '🔪', 'food', <JobClue>[
+      JobClue('Thin burn marks on the forearms', 'reaching into hot ovens'),
+      JobClue('A callus on the side of the index finger', 'gripping a knife for hours'),
+      JobClue('Says "behind!" walking past people', 'kitchen habit so nobody gets burned'),
+      JobClue('Works nights, weekends and holidays', 'when restaurants are busiest'),
+      JobClue('Tastes food, then asks for salt', 'trained to season'),
+    ]),
+    JobProfile('Barista', '☕', 'food', <JobClue>[
+      JobClue('Gets up before 5 a.m. every day', 'opening shift at a coffee shop'),
+      JobClue('Faded brown stains on the sleeve cuffs', 'espresso splashes'),
+      JobClue('Remembers everyone\'s usual order', 'regulars every morning'),
+      JobClue('A small steam burn on the thumb', 'the milk steamer'),
+      JobClue('Phone full of photos of latte art', 'practicing pours'),
+    ]),
+    JobProfile('Electrician', '⚡', 'trades', <JobClue>[
+      JobClue('Tiny nicks and scars on the fingertips', 'stripping wire with sharp tools'),
+      JobClue('Notices the outlets and light switches in a room', 'can\'t switch off the work eye'),
+      JobClue('A pen-sized voltage tester in a shirt pocket', 'checks wires before touching them'),
+      JobClue('Colored wire scraps in their truck', 'leftovers from jobs'),
+      JobClue('Wears boots with thick rubber soles', 'protection from shocks'),
+    ]),
+    JobProfile('Carpenter', '🪚', 'trades', <JobClue>[
+      JobClue('Sawdust in the seams of their shoes', 'cutting wood all day'),
+      JobClue('A flat pencil tucked behind one ear', 'marking cuts'),
+      JobClue('Calluses across the top of the palm', 'swinging a hammer'),
+      JobClue('Runs a hand along door frames and trim', 'checking the work out of habit'),
+      JobClue('Guesses lengths by eye, and gets them right', 'years of measuring'),
+    ]),
+    JobProfile('Mechanic', '🔧', 'trades', <JobClue>[
+      JobClue('Dark grease in the cracks of the knuckles', 'it never fully washes out'),
+      JobClue('Smells faintly of motor oil', 'under cars all day'),
+      JobClue('Names a car problem from the sound alone', 'hears engines all day'),
+      JobClue('Scraped knuckles that keep healing', 'wrenches slip in tight spaces'),
+      JobClue('Lies down on the floor without thinking twice', 'used to working on their back'),
+    ]),
+    JobProfile('House painter', '🎨', 'trades', <JobClue>[
+      JobClue('Tiny paint flecks in their hair and on their watch', 'rolling ceilings'),
+      JobClue('Talks about "eggshell" and "satin" finishes', 'paint sheens'),
+      JobClue('A sore right shoulder', 'rolling walls overhead'),
+      JobClue('Notices patched spots on your walls', 'trained to spot uneven surfaces'),
+      JobClue('Speckled white work pants', 'drips from many jobs'),
+    ]),
+    JobProfile('Landscaper', '🌿', 'outdoors', <JobClue>[
+      JobClue('A sharp tan line where the sleeves end', 'working outside in T-shirts'),
+      JobClue('Grass stains on the knees', 'kneeling to plant and edge'),
+      JobClue('Knows the names of all the plants in your yard', 'plants them for a living'),
+      JobClue('Busy all summer, slow every winter', 'seasonal work'),
+      JobClue('Thick calluses and strong forearms', 'shovels, mowers and trimmers'),
+    ]),
+    JobProfile('Mail carrier', '📬', 'outdoors', <JobClue>[
+      JobClue('Tanned legs with a sock line', 'walking a route in uniform shorts'),
+      JobClue('One shoulder sits lower than the other', 'carrying a heavy bag'),
+      JobClue('Knows every street name in town', 'delivers to all of them'),
+      JobClue('Tenses up when a dog barks', 'dogs are the classic job hazard'),
+      JobClue('Done for the day by mid-afternoon', 'early start, fixed route'),
+    ]),
+    JobProfile('Truck driver', '🚚', 'outdoors', <JobClue>[
+      JobClue('Left arm more tanned than the right', 'the driver\'s side window'),
+      JobClue('Gives distances in hours instead of miles', 'thinks in drive time'),
+      JobClue('Knows the best diners off every highway', 'eats on the road'),
+      JobClue('Stiff lower back after sitting', 'long hours in the cab'),
+      JobClue('Away for days at a time', 'long-haul routes'),
+    ]),
+    JobProfile('Programmer', '💻', 'desk', <JobClue>[
+      JobClue('Answers messages at 1 a.m.', 'flexible, late work hours'),
+      JobClue('Says "that\'s a bug" about everyday problems', 'thinks in code'),
+      JobClue('Free T-shirt from a tech conference', 'industry swag'),
+      JobClue('Types very fast without looking', 'hours at a keyboard'),
+      JobClue('Talks about "shipping" things that aren\'t packages', 'software releases'),
+    ]),
+    JobProfile('Accountant', '🧮', 'desk', <JobClue>[
+      JobClue('Disappears every March and April', 'tax season'),
+      JobClue('Does tips and splits in their head instantly', 'numbers all day'),
+      JobClue('Mentions "end of the quarter" a lot', 'financial deadlines'),
+      JobClue('A neat, labeled folder for everything', 'organized by trade'),
+      JobClue('Asks if you kept your receipts', 'can\'t help it'),
+    ]),
+    JobProfile('Lawyer', '⚖️', 'desk', <JobClue>[
+      JobClue('Answers questions very precisely, never a loose yes', 'trained to avoid being pinned down'),
+      JobClue('Mentions "billable hours"', 'charges clients by the hour'),
+      JobClue('A conservative, expensive-looking suit', 'dressing for court and clients'),
+      JobClue('Carries a heavy bag of documents', 'case files'),
+      JobClue('Asks "what exactly do you mean by that?"', 'words matter in their work'),
+    ]),
+    JobProfile('Teacher', '🍎', 'people', <JobClue>[
+      JobClue('Dry-erase marker smudge on the side of the hand', 'writing on whiteboards'),
+      JobClue('Voice carries easily across a noisy room', 'talks over a class all day'),
+      JobClue('Free most of the summer', 'school calendar'),
+      JobClue('Counts heads in a group without thinking', 'field-trip habit'),
+      JobClue('A stack of papers covered in red ink', 'grading'),
+    ]),
+    JobProfile('Hairdresser', '✂️', 'people', <JobClue>[
+      JobClue('Tiny cuts on the fingers of one hand', 'sharp scissors'),
+      JobClue('Glances at everyone\'s haircut', 'professional habit'),
+      JobClue('Little hair clippings stuck to their clothes', 'they get everywhere'),
+      JobClue('Works every Saturday', 'busiest day at the salon'),
+      JobClue('Sore wrists and thumbs', 'cutting all day'),
+    ]),
+    JobProfile('Personal trainer', '🏋️', 'people', <JobClue>[
+      JobClue('Wears athletic clothes all day', 'works in a gym'),
+      JobClue('Counts out loud by habit, even stairs', 'counting reps for clients'),
+      JobClue('Comments on people\'s posture', 'trained to spot it'),
+      JobClue('Busy early mornings and evenings, free at noon', 'when clients can train'),
+      JobClue('Carries a huge water jug everywhere', 'active all day'),
+    ]),
+    JobProfile('Firefighter', '🚒', 'people', <JobClue>[
+      JobClue('Works 24-hour shifts, then has days off', 'station schedule'),
+      JobClue('Cooks huge meals like it\'s for a crowd', 'cooks for the whole crew'),
+      JobClue('Faint smell of smoke on a jacket', 'calls and training burns'),
+      JobClue('Stays completely calm when something goes wrong', 'trained for emergencies'),
+      JobClue('Checks where the exits are in a new room', 'habit'),
+    ]),
+    JobProfile('Guitar teacher', '🎸', 'music', <JobClue>[
+      JobClue('Hard calluses on the fingertips of one hand', 'pressing strings'),
+      JobClue('Long nails on one hand, short on the other', 'picking with one, fretting with the other'),
+      JobClue('Busiest after school and on weekends', 'when students are free'),
+      JobClue('Taps rhythms on the table without noticing', 'always keeping time'),
+      JobClue('Earplugs on their keychain', 'protecting their hearing'),
+    ]),
+  ];
+
+  /// Details that fit almost anyone. They show up as noise.
+  static const List<String> decoys = <String>[
+    'Has a phone with a cracked screen',
+    'Wears a gray hoodie',
+    'Is drinking an iced coffee',
+    'Has a small tattoo on the wrist',
+    'Wears a baseball cap',
+    'Has headphones around their neck',
+    'Mentions they have a dog',
+    'Seems a little tired',
+    'Has a sticker on their water bottle',
+  ];
+
+  static LabQuestion make(math.Random rng) => makeFor(jobs[rng.nextInt(jobs.length)], rng);
+
+  static LabQuestion makeFor(JobProfile job, math.Random rng) {
+    final clues = (List<JobClue>.of(job.clues)..shuffle(rng)).take(3).toList();
+    final decoy = decoys[rng.nextInt(decoys.length)];
+    final lines = <String>[...clues.map((c) => c.clue), decoy]..shuffle(rng);
+    final lookalikes = jobs.where((j) => j != job && j.group == job.group).toList()..shuffle(rng);
+    final others = jobs.where((j) => j != job && j.group != job.group).toList()..shuffle(rng);
+    final wrong = <JobProfile>[...lookalikes.take(2), ...others].take(3).toList();
+    final options = <JobProfile>[job, ...wrong]..shuffle(rng);
+    return LabQuestion(
+      prompt: 'What do they do for work?',
+      context: 'You notice:\n${lines.map((l) => '• $l').join('\n')}',
+      options: <String>[for (final o in options) '${o.emoji} ${o.name}'],
+      correct: options.indexOf(job),
+      explain: '${job.name}. ${clues.map((c) => '${c.clue}: ${c.why}.').join(' ')} '
+          '"$decoy" fits almost anyone, so ignore it.',
+    );
+  }
+}
+
+class LabQuestion {
+  const LabQuestion({
+    required this.prompt,
+    required this.options,
+    required this.correct,
+    required this.explain,
+    this.context = '',
+  });
+
+  final String prompt;
+  final String context;
+  final List<String> options;
+  final int correct;
+  final String explain;
+
+  LabQuestion shuffled(math.Random rng) {
+    final order = List<int>.generate(options.length, (i) => i)..shuffle(rng);
+    return LabQuestion(
+      prompt: prompt,
+      context: context,
+      options: <String>[for (final i in order) options[i]],
+      correct: order.indexOf(correct),
+      explain: explain,
+    );
+  }
+}
+
+/// Pick the more convincing of two lines. For games only.
+class PokerFace {
+  PokerFace._();
+
+  static const List<LabQuestion> items = <LabQuestion>[
+    LabQuestion(
+      context: 'Two Truths & a Lie. Your lie: you once met a famous chef.',
+      prompt: 'Which version is more convincing?',
+      options: <String>[
+        'I met Gordon Ramsay at an airport in Chicago. He was buying gum, and he\'s shorter than you\'d think.',
+        'I swear I met Gordon Ramsay once. Honestly, it was so cool. You have to believe me.',
+      ],
+      correct: 0,
+      explain: 'A place, an ordinary action and an odd detail (gum, shorter than expected) are what real memories sound like. "I swear", "honestly" and "you have to believe me" are credibility pitches, the first thing a good reader flags.',
+    ),
+    LabQuestion(
+      context: 'You\'re planning a surprise party. Your friend asks why they need to be at your house at 6.',
+      prompt: 'Which answer keeps the secret?',
+      options: <String>[
+        'My mom wants help moving the couch before dinner. It\'ll take ten minutes.',
+        'No reason. Why? Is it weird to ask? It\'s not for anything. Just come.',
+      ],
+      correct: 0,
+      explain: 'A simple, specific, boring reason sounds true. Answering a question with questions and insisting "it\'s not for anything" is defensive, and it makes people curious.',
+    ),
+    LabQuestion(
+      context: 'Werewolf (or Mafia). You\'re a werewolf. Someone says: "You were really quiet last round. Why?"',
+      prompt: 'Which reply draws less suspicion?',
+      options: <String>[
+        'I wasn\'t quiet! I talk the same as always. Why are you attacking me? That\'s so random.',
+        'I was trying to work out why Sam voted so fast. That felt off to me.',
+      ],
+      correct: 1,
+      explain: 'Calmly giving a reason, and pointing at real game behavior, sounds like an innocent player thinking. A loud over-denial ("I talk the same as always!") is the classic guilty reaction.',
+    ),
+    LabQuestion(
+      context: 'Two Truths & a Lie. Your lie: you broke your arm in third grade.',
+      prompt: 'Which version is more convincing?',
+      options: <String>[
+        'I broke my arm in third grade. It hurt. It was bad.',
+        'In third grade I fell off the monkey bars and broke my arm. The cast was blue and the whole class signed it.',
+      ],
+      correct: 1,
+      explain: 'Thin stories sound made up. A cause (monkey bars), a sensory detail (the blue cast) and other people (the class signing it) make it sound remembered.',
+    ),
+    LabQuestion(
+      context: 'Poker with friends. You\'re bluffing, and someone asks: "Do you have it?"',
+      prompt: 'Which answer gives away less?',
+      options: <String>[
+        'You\'ll have to pay to find out.',
+        'Yeah, obviously. I have a really, really good hand right now. Like the best one.',
+      ],
+      correct: 0,
+      explain: 'Have one stock answer you give every time, strong or weak, so your words can\'t be a tell. Overselling a hand is a classic bluffing tell.',
+    ),
+    LabQuestion(
+      context: 'Among Us. You\'re the impostor. "Where were you when the lights went out?"',
+      prompt: 'Which alibi holds up better?',
+      options: <String>[
+        'Somewhere in the middle, doing tasks and stuff. I don\'t really know.',
+        'Electrical, then down to Storage. I passed Blue near Cafeteria.',
+      ],
+      correct: 1,
+      explain: 'Specific places in order, plus another player you saw, sounds like a real route. Being vague right at the key moment is exactly what the Checkable Details level teaches people to catch.',
+    ),
+    LabQuestion(
+      context: 'Two Truths & a Lie. Your lie: you\'ve been to Japan.',
+      prompt: 'Which version is more convincing?',
+      options: <String>[
+        'I have been to Japan. I went there. It was a trip to Japan that we took.',
+        'I went to Japan when I was ten. Mostly I remember toilets with buttons and getting lost in a train station.',
+      ],
+      correct: 1,
+      explain: 'Real memories of a trip are odd and specific: what a ten-year-old would actually remember. Repeating the claim without adding anything sounds rehearsed.',
+    ),
+    LabQuestion(
+      context: 'Surprise party. Your friend sees you heading out: "Where are you going?"',
+      prompt: 'Which answer keeps the secret?',
+      options: <String>[
+        'To get a birthday card for my grandma. Want anything from CVS?',
+        'Nowhere special. Just out. Like, around. I\'ll be back.',
+      ],
+      correct: 0,
+      explain: 'A specific, believable errand plus a normal follow-up question shuts the topic down. Vague answers invite more questions.',
+    ),
+    LabQuestion(
+      context: 'Your friend asks: "Did you get me something for my birthday?" You did.',
+      prompt: 'Which answer keeps the surprise?',
+      options: <String>[
+        'No. Definitely not. I would never. I absolutely did not get you anything.',
+        'Ha, I haven\'t even thought about it. When is it again, the 14th?',
+      ],
+      correct: 1,
+      explain: 'Stacked denials ("definitely not", "I would never") sound like protesting too much. A light answer that changes the subject sounds unbothered.',
+    ),
+    LabQuestion(
+      context: 'Two Truths & a Lie. Which lie will fool more people?',
+      prompt: 'Pick the better lie.',
+      options: <String>[
+        'I have a cousin named Jamie who lives in Ohio.',
+        'I once swam with a whale shark in Mexico and it brushed my leg.',
+      ],
+      correct: 0,
+      explain: 'Everyone hunts for the wild one. Make your lie boring and believable, and make one of your TRUE facts sound unbelievable.',
+    ),
+    LabQuestion(
+      context: 'Werewolf (or Mafia). You\'re a werewolf. "Who do you suspect?"',
+      prompt: 'Which answer sounds more like an innocent player?',
+      options: <String>[
+        'Everyone except me, obviously. I\'m the most innocent person here, trust me.',
+        'Probably Riley. They changed their vote at the last second, which seemed weird.',
+      ],
+      correct: 1,
+      explain: 'Innocent players reason from what happened in the game. Announcing your own innocence ("trust me") is a credibility pitch.',
+    ),
+    LabQuestion(
+      context: 'Poker. Your big bluff just won, and a friend asks: "Were you bluffing?"',
+      prompt: 'What\'s the best answer?',
+      options: <String>[
+        'Maybe. Maybe not.',
+        'No way, I had it, I promise. I\'d never bluff you like that.',
+      ],
+      correct: 0,
+      explain: 'Never confirm or deny. If you show your bluffs or swear you never bluff, people learn your patterns. The same calm non-answer every time keeps them guessing.',
+    ),
+    LabQuestion(
+      context: 'Two Truths & a Lie. How should you say your three statements?',
+      prompt: 'Which delivery is more convincing?',
+      options: <String>[
+        'All three at the same speed, volume and tone.',
+        'The lie a bit faster, to get it over with.',
+      ],
+      correct: 0,
+      explain: 'Readers compare your statements to each other: your baseline. Any change on the lie (faster, quieter, a nervous laugh) is the tell. Practice saying all three the same way.',
+    ),
+    LabQuestion(
+      context: 'Two Truths & a Lie. Your lie: you found \$100 on the street.',
+      prompt: 'Which version is more convincing?',
+      options: <String>[
+        'Last summer I found a hundred dollars. I\'m walking out of Target, I look down, and there it is.',
+        'Last summer I found a hundred-dollar bill outside a Target. I turned it in, and nobody claimed it.',
+      ],
+      correct: 1,
+      explain: 'Switching from past to present tense ("I found… I\'m walking… there it is") right at the key moment is a statement-analysis red flag. Keep the whole story in the past tense.',
+    ),
+  ];
+}
+
+class LabLessons {
+  LabLessons._();
+
+  static const List<PokerLesson> deduction = <PokerLesson>[
+    PokerLesson('🕵️', 'How Patrick Jane Does It', <LessonPage>[
+      LessonPage('He isn\'t psychic',
+          'Jane notices small physical details, makes a confident guess, and watches your reaction to correct himself. It\'s half observation, half cold reading.'),
+      LessonPage('Observe, guess, adjust',
+          'Look first. Say a broad guess like it\'s a fact. A nod, a smile or a flinch tells you whether to narrow down or switch direction.',
+          '"You work with your hands… something precise." (A nod.) "Wiring, maybe?"'),
+      LessonPage('Combine, don\'t jump',
+          'One clue has lots of explanations. Three clues pointing the same way is a deduction. Throw out details that fit almost anyone: a cracked phone, a hoodie, being tired.'),
+    ]),
+    PokerLesson('✋', 'What to Look At', <LessonPage>[
+      LessonPage('Hands first',
+          'Hands show work. Where are the calluses (fingertips: strings; palm: tools; side of the finger: a knife or pen)? Burns, small cuts, stains, dry red knuckles, nail length.'),
+      LessonPage('Wear and tear',
+          'Where shoes and clothes wear out, tan lines (one arm, sleeves, socks), one shoulder lower than the other, posture from repeating the same motion every day.'),
+      LessonPage('Habits leak the job',
+          'What someone notices first in a room, the words they use without thinking, and their schedule (night shifts, summers off, busy in tax season) all point to what they do.',
+          'Someone who checks for exits in every new room: firefighter, security, or police.'),
+      LessonPage('Be kind about it',
+          'Deductions can feel invasive. Keep it playful, ask before guessing about anything personal, and never use it to embarrass someone.'),
+    ]),
+  ];
+
+  static const List<PokerLesson> pokerFace = <PokerLesson>[
+    PokerLesson('😐', 'Bluffing for Games', <LessonPage>[
+      LessonPage('Detection, flipped',
+          'Two Truths & a Lie, poker, Werewolf, Among Us and surprise parties all reward a good bluff. A good reader looks for changes from your baseline. So the whole trick is: don\'t change.'),
+      LessonPage('Same you, true or false',
+          'Say truths and lies at the same speed, volume and posture. Practice saying both out loud until they feel the same.'),
+      LessonPage('Build from something real',
+          'Change one detail of a real memory instead of inventing a whole story. Real memories already come with senses, side details and odd bits.'),
+      LessonPage('Don\'t sell it',
+          'No "honestly", no "I swear", no long explanations. Short and calm. Credibility pitches are what readers flag first.'),
+    ]),
+    PokerLesson('🎲', 'Winning the Game', <LessonPage>[
+      LessonPage('Plan the side details',
+          'Good readers ask unexpected questions: who else was there, what the weather was like. Decide those details before the game starts.'),
+      LessonPage('Two Truths & a Lie',
+          'Make one TRUE fact sound unbelievable, and make the lie boring and believable. People hunt for the wild one.'),
+      LessonPage('Poker',
+          'Same routine every time: same time to act, same bet sizes, same stock line ("You\'ll have to pay to find out"). Any difference is your tell.'),
+      LessonPage('Keep it in the game',
+          'Bluff where everyone agreed to bluffing. Outside games, lies cost trust, and people remember. A good poker face is for the table.'),
+    ]),
+  ];
+}
+
+class _HubTile extends StatelessWidget {
+  const _HubTile({required this.emoji, required this.title, required this.subtitle, required this.onTap, this.trailing});
+  final String emoji;
+  final String title;
+  final String subtitle;
+  final String? trailing;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: Palette.surface,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: <Widget>[
+                Text(emoji, style: const TextStyle(fontSize: 26)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(title, style: const TextStyle(color: Palette.textPrimary, fontSize: 16, fontWeight: FontWeight.w900)),
+                      Text(subtitle, style: const TextStyle(color: Palette.textMuted, fontSize: 13)),
+                    ],
+                  ),
+                ),
+                if (trailing != null) Text(trailing!, style: const TextStyle(color: Palette.gold, fontWeight: FontWeight.w800)),
+                const Icon(Icons.chevron_right, color: Palette.textMuted),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Widget _hubSection(String text) => Padding(
+      padding: const EdgeInsets.fromLTRB(0, 18, 0, 8),
+      child: Text(text,
+          style: const TextStyle(color: Palette.textMuted, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+    );
+
+Widget _hubHeader(BuildContext context, String title, GameState game) => Row(
+      children: <Widget>[
+        IconButton(
+          onPressed: () => Navigator.of(context).maybePop(),
+          icon: const Icon(Icons.arrow_back, color: Palette.textMuted),
+        ),
+        Expanded(
+          child: Text(title, style: const TextStyle(color: Palette.textPrimary, fontSize: 23, fontWeight: FontWeight.w900)),
+        ),
+        StatPill(emoji: '💡', label: '${game.insightPoints} IP', color: Palette.blue, tooltip: 'Insight Points'),
+      ],
+    );
+
+/// A 10-question multiple-choice run with explanations.
+class LabQuizScreen extends StatefulWidget {
+  const LabQuizScreen({
+    super.key,
+    required this.game,
+    required this.title,
+    required this.drillKey,
+    required this.color,
+    required this.build,
+  });
+
+  final GameState game;
+  final String title;
+  final String drillKey;
+  final Color color;
+  final List<LabQuestion> Function(math.Random rng) build;
+
+  @override
+  State<LabQuizScreen> createState() => _LabQuizScreenState();
+}
+
+class _LabQuizScreenState extends State<LabQuizScreen> {
+  final math.Random _rng = math.Random();
+  late List<LabQuestion> _questions = widget.build(_rng);
+  int _index = 0;
+  int _score = 0;
+  int? _picked;
+  bool _done = false;
+  bool _newBest = false;
+
+  void _pick(int i) {
+    if (_picked != null) return;
+    if (i == _questions[_index].correct) {
+      _score++;
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+    setState(() => _picked = i);
+  }
+
+  void _next() {
+    if (_index + 1 >= _questions.length) {
+      _newBest = widget.game.reportLab(widget.drillKey, _score);
+      setState(() => _done = true);
+      return;
+    }
+    setState(() {
+      _index++;
+      _picked = null;
+    });
+  }
+
+  void _restart() {
+    setState(() {
+      _questions = widget.build(_rng);
+      _index = 0;
+      _score = 0;
+      _picked = null;
+      _done = false;
+      _newBest = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: SafeArea(child: _done ? _buildDone() : _buildQuestion()),
+    );
+  }
+
+  Widget _buildDone() {
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: <Widget>[
+          const Spacer(),
+          Text(_newBest ? '🏆' : '🎯', style: const TextStyle(fontSize: 64)),
+          const SizedBox(height: 10),
+          Text('$_score / ${_questions.length}',
+              style: const TextStyle(color: Palette.textPrimary, fontSize: 34, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 6),
+          Text('${_newBest ? 'New best! ' : ''}+${_score * GameState.labIp} IP',
+              style: const TextStyle(color: Palette.gold, fontSize: 17, fontWeight: FontWeight.w800)),
+          const Spacer(),
+          ChunkyButton(label: 'Done', color: widget.color, onPressed: () => Navigator.of(context).pop()),
+          TextButton(
+            onPressed: _restart,
+            child: const Text('AGAIN', style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuestion() {
+    final q = _questions[_index];
+    final answered = _picked != null;
+    return Column(
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 4, 16, 0),
+          child: Row(
+            children: <Widget>[
+              IconButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+                icon: const Icon(Icons.close, color: Palette.textMuted),
+              ),
+              Expanded(
+                child: Text(widget.title.toUpperCase(),
+                    style: TextStyle(color: widget.color, fontWeight: FontWeight.w900, letterSpacing: 1.3)),
+              ),
+              Text('${_index + 1}/${_questions.length} · $_score ✓',
+                  style: const TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800)),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            children: <Widget>[
+              if (q.context.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Palette.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Palette.border, width: 1.5),
+                  ),
+                  child: Text(q.context, style: const TextStyle(color: Palette.textPrimary, fontSize: 15.5, height: 1.5)),
+                ),
+              const SizedBox(height: 14),
+              Text(q.prompt, style: const TextStyle(color: Palette.textPrimary, fontSize: 18, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 12),
+              for (var i = 0; i < q.options.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Material(
+                    color: !answered
+                        ? Palette.surfaceHigh
+                        : (i == q.correct
+                            ? Palette.green.withAlpha(60)
+                            : (i == _picked ? Palette.red.withAlpha(60) : Palette.surface)),
+                    borderRadius: BorderRadius.circular(14),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: answered ? null : () => _pick(i),
+                      child: Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: answered && i == q.correct ? Palette.green : Palette.border,
+                            width: 1.5,
+                          ),
+                        ),
+                        child: Text(q.options[i],
+                            style: const TextStyle(color: Palette.textPrimary, fontSize: 15, height: 1.4, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                  ),
+                ),
+              if (answered) ...<Widget>[
+                const SizedBox(height: 6),
+                InfoBanner(
+                  icon: _picked == q.correct ? Icons.check_circle : Icons.cancel,
+                  color: _picked == q.correct ? Palette.green : Palette.orange,
+                  text: q.explain,
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (answered)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: ChunkyButton(
+              label: _index + 1 >= _questions.length ? 'See score' : 'Next',
+              color: widget.color,
+              onPressed: _next,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class DeductionLabScreen extends StatefulWidget {
+  const DeductionLabScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<DeductionLabScreen> createState() => _DeductionLabScreenState();
+}
+
+class _DeductionLabScreenState extends State<DeductionLabScreen> {
+  GameState get game => widget.game;
+
+  void _push(Widget screen) =>
+      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen)).then((_) {
+        if (mounted) setState(() {});
+      });
+
+  void _log(int result) {
+    HapticFeedback.mediumImpact();
+    game.recordDeduction(result);
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = game.deduceStats;
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+          children: <Widget>[
+            _hubHeader(context, 'Deduction Lab', game),
+            const InfoBanner(
+              icon: Icons.search,
+              color: Palette.teal,
+              text: 'Read someone\'s job from small clues, the way Patrick Jane does: observe, combine the clues, '
+                  'make a confident guess, then watch the reaction.',
+            ),
+            _hubSection('LESSONS'),
+            for (final l in LabLessons.deduction)
+              _HubTile(
+                emoji: l.emoji,
+                title: l.title,
+                subtitle: '${l.pages.length} short cards',
+                onTap: () => _push(PokerLessonScreen(lesson: l)),
+              ),
+            _hubSection('PRACTICE'),
+            _HubTile(
+              emoji: '🗂️',
+              title: 'Case Files',
+              subtitle: '10 people, 4 clues each. One clue is always noise.',
+              trailing: game.labBest['deduce'] == null ? null : 'best ${game.labBest['deduce']}/10',
+              onTap: () => _push(LabQuizScreen(
+                game: game,
+                title: 'Case Files',
+                drillKey: 'deduce',
+                color: Palette.teal,
+                build: (rng) => (List<JobProfile>.of(Deduction.jobs)..shuffle(rng))
+                    .take(10)
+                    .map((j) => Deduction.makeFor(j, rng))
+                    .toList(),
+              )),
+            ),
+            _hubSection('REAL LIFE: PEOPLE WATCHING'),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Palette.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Palette.border, width: 1.5),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const Text(
+                    'Meeting someone new (a friend\'s parent, a coach, a neighbor)? Look at their hands, shoes and habits, '
+                    'guess their job in your head, then find out. Log how you did:',
+                    style: TextStyle(color: Palette.textPrimary, fontSize: 14, height: 1.4),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: <Widget>[
+                      Expanded(child: ChunkyButton(label: 'Right', color: Palette.green, height: 46, onPressed: () => _log(2))),
+                      const SizedBox(width: 8),
+                      Expanded(child: ChunkyButton(label: 'Close', color: Palette.gold, height: 46, onPressed: () => _log(1))),
+                      const SizedBox(width: 8),
+                      Expanded(child: ChunkyButton(label: 'Wrong', color: Palette.red, height: 46, onPressed: () => _log(0))),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    s[0] == 0
+                        ? 'No guesses yet. "Close" means the right field (healthcare, trades, an office job).'
+                        : '${s[1]} right and ${s[2]} close out of ${s[0]} guesses '
+                            '(${(100 * (s[1] + s[2]) / s[0]).round()}% in the right field or better).',
+                    style: const TextStyle(color: Palette.textMuted, fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class PokerFaceScreen extends StatefulWidget {
+  const PokerFaceScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<PokerFaceScreen> createState() => _PokerFaceScreenState();
+}
+
+class _PokerFaceScreenState extends State<PokerFaceScreen> {
+  final TextEditingController _name = TextEditingController();
+
+  GameState get game => widget.game;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  void _push(Widget screen) =>
+      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen)).then((_) {
+        if (mounted) setState(() {});
+      });
+
+  void _log({required bool fooled}) {
+    HapticFeedback.mediumImpact();
+    game.recordBluff(_name.text.trim().isEmpty ? 'Friends' : _name.text.trim(), fooled: fooled);
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final stats = game.bluffStats;
+    final rounds = stats.values.fold<int>(0, (a, s) => a + s[0]);
+    final fooled = stats.values.fold<int>(0, (a, s) => a + s[1]);
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+          children: <Widget>[
+            _hubHeader(context, 'Poker Face', game),
+            const InfoBanner(
+              icon: Icons.sentiment_neutral,
+              color: Palette.orange,
+              text: 'Bluff like a pro in games: Two Truths & a Lie, poker, Werewolf, Among Us, surprise parties. '
+                  'It\'s lie detection flipped around, so it makes you a better reader too.',
+            ),
+            _hubSection('LESSONS'),
+            for (final l in LabLessons.pokerFace)
+              _HubTile(
+                emoji: l.emoji,
+                title: l.title,
+                subtitle: '${l.pages.length} short cards',
+                onTap: () => _push(PokerLessonScreen(lesson: l)),
+              ),
+            _hubSection('PRACTICE'),
+            _HubTile(
+              emoji: '🎭',
+              title: 'Which Sounds True?',
+              subtitle: 'Pick the more convincing bluff, and learn what gives the other one away.',
+              trailing: game.labBest['convince'] == null ? null : 'best ${game.labBest['convince']}/10',
+              onTap: () => _push(LabQuizScreen(
+                game: game,
+                title: 'Which Sounds True?',
+                drillKey: 'convince',
+                color: Palette.orange,
+                build: (rng) => (List<LabQuestion>.of(PokerFace.items)..shuffle(rng))
+                    .take(10)
+                    .map((q) => q.shuffled(rng))
+                    .toList(),
+              )),
+            ),
+            _hubSection('REAL LIFE: YOUR TURN IN TWO TRUTHS & A LIE'),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Palette.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Palette.border, width: 1.5),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const Text(
+                    'When it\'s your turn to tell two truths and a lie, log whether your friends caught the lie.',
+                    style: TextStyle(color: Palette.textPrimary, fontSize: 14, height: 1.4),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _name,
+                    style: const TextStyle(color: Palette.textPrimary),
+                    decoration: InputDecoration(
+                      labelText: 'Who were you playing with? (optional)',
+                      labelStyle: const TextStyle(color: Palette.textMuted),
+                      filled: true,
+                      fillColor: Palette.surfaceHigh,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: ChunkyButton(label: 'I fooled them', color: Palette.green, height: 46, onPressed: () => _log(fooled: true)),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ChunkyButton(label: 'They caught me', color: Palette.red, height: 46, onPressed: () => _log(fooled: false)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    rounds == 0
+                        ? 'No rounds yet. Guessing at random, people catch the lie 1 time in 3, so fooling them more than '
+                            '2 times in 3 means your poker face is working.'
+                        : 'You fooled them $fooled of $rounds times (${(100 * fooled / rounds).round()}%). '
+                            'Random guessing would let you fool them about 67%.',
+                    style: const TextStyle(color: Palette.textMuted, fontSize: 13, height: 1.35),
+                  ),
+                  if (stats.length > 1) ...<Widget>[
+                    const SizedBox(height: 8),
+                    for (final e in (stats.entries.toList()..sort((a, b) => b.value[0].compareTo(a.value[0]))))
+                      Text('${e.key}: fooled ${e.value[1]}/${e.value[0]}',
+                          style: const TextStyle(color: Palette.textPrimary, fontSize: 13.5)),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
