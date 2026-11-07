@@ -89,4 +89,33 @@ void main() {
       }
     }
   });
+
+  test('the two lessons in each level have their own questions', () {
+    for (final info in Curriculum.levels) {
+      final lessons = Curriculum.nodes.where((n) => n.level == info.number && !n.isReview).toList();
+      expect(lessons.length, 2, reason: 'level ${info.number}');
+      final a = Curriculum.lessonPools[lessons[0].id]!.map((c) => c.id).toSet();
+      final b = Curriculum.lessonPools[lessons[1].id]!.map((c) => c.id).toSet();
+      expect(a.intersection(b), isEmpty, reason: 'level ${info.number} lessons overlap');
+      expect(a.length, greaterThanOrEqualTo(lessons[0].questLength), reason: lessons[0].id);
+      expect(b.length, greaterThanOrEqualTo(lessons[1].questLength), reason: lessons[1].id);
+      expect(a.union(b), Curriculum.challenges.where((c) => c.level == info.number).map((c) => c.id).toSet());
+    }
+  });
+
+  test('a lesson quest only uses that lesson\'s questions', () {
+    final game = GameState();
+    final rng = math.Random(2);
+    for (var i = 0; i < Curriculum.nodes.length; i++) {
+      final node = Curriculum.nodes[i];
+      if (node.isReview || node.level == 1) continue; // level 1 cases are freshly generated
+      final own = Curriculum.lessonPools[node.id]!.map((c) => c.id).toSet();
+      final session = QuestBuilder.build(i, game, rng);
+      expect(session.queue.length, node.questLength, reason: node.id);
+      for (final item in session.queue) {
+        expect(own, contains(item.challenge.id), reason: node.id);
+      }
+    }
+    game.dispose();
+  });
 }

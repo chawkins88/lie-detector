@@ -585,15 +585,15 @@ class Curriculum {
     SkillNode(
       id: 'l5a',
       level: 5,
-      title: 'Qualifiers & Oaths',
-      description: '"To be honest", "I swear", "frankly": words that try to sound true.',
+      title: 'Qualifiers & Minimizing',
+      description: '"To be honest", "I swear", "just a little": words that try to sound true or shrink things.',
       icon: Icons.campaign,
     ),
     SkillNode(
       id: 'l5b',
       level: 5,
-      title: 'Distance & Minimizing',
-      description: '"That woman", "just a little", and repeating the question back.',
+      title: 'Distance & Stalling',
+      description: '"That woman", "the individual", and repeating the question back to buy time.',
       icon: Icons.social_distance,
     ),
     SkillNode(
@@ -767,6 +767,48 @@ class Curriculum {
       questLength: 12,
     ),
   ];
+
+  /// Lessons that teach specific skills; the other lesson of the level gets the rest.
+  static const Map<String, Set<Flag>> _lessonFlags = <String, Set<Flag>>{
+    'l4a': <Flag>{Flag.pronounDrop, Flag.temporalGap},
+    'l5a': <Flag>{Flag.qualifier, Flag.minimizing},
+    'l7a': <Flag>{Flag.openQuestion, Flag.rapport},
+    'l9a': <Flag>{Flag.unverifiable},
+    'l10a': <Flag>{Flag.cognitiveLoad},
+    'l11a': <Flag>{Flag.mythBusting},
+    'l12a': <Flag>{Flag.deduction},
+  };
+
+  /// Each lesson's own questions, so the two lessons of a level never repeat
+  /// each other. Truthful ("nothing here") cases are shared out evenly.
+  static final Map<String, List<Challenge>> lessonPools = _buildLessonPools();
+
+  static Map<String, List<Challenge>> _buildLessonPools() {
+    final pools = <String, List<Challenge>>{};
+    for (final info in levels) {
+      final lessons = nodes.where((n) => n.level == info.number && !n.isReview).toList();
+      final a = <Challenge>[];
+      final b = <Challenge>[];
+      final clean = <Challenge>[];
+      final flagsA = _lessonFlags[lessons.first.id];
+      var i = 0;
+      for (final c in challenges.where((c) => c.level == info.number)) {
+        if (flagsA == null) {
+          (i++.isEven ? a : b).add(c);
+        } else if (c.isClean) {
+          clean.add(c);
+        } else {
+          (flagsA.contains(c.flag) ? a : b).add(c);
+        }
+      }
+      for (final c in clean) {
+        (a.length <= b.length ? a : b).add(c);
+      }
+      pools[lessons.first.id] = a;
+      if (lessons.length > 1) pools[lessons[1].id] = b;
+    }
+    return pools;
+  }
 
   /// Fixed questions by id (used to replay saved mistakes).
   static final Map<String, Challenge> byId = <String, Challenge>{for (final c in challenges) c.id: c};
@@ -3274,6 +3316,128 @@ class Curriculum {
       answer: 0,
       insight: 'Mentalists watch for tiny changes (a held breath, a glance, a pause) as they name each option. It\'s a baseline test: the reaction to the right answer differs from the others. It works best on people who aren\'t trying hard to hide it.',
     ),
+    // ── Extra questions so each lesson has its own set ──────────────────
+    Challenge.cluster(
+      id: 't11',
+      level: 6,
+      flag: Flag.truthMarkers,
+      prompt: 'Tap the 3 signs this account is likely truthful.',
+      profile: 'A friend explains why she was late to your birthday dinner:\n\n"I left at 6:15, I know because my podcast had just started. On Maple there was a fender bender, and a guy in a Lakers hat was directing traffic with his phone flashlight, which was kind of hilarious. I honestly can\'t remember if I texted you or just meant to. I would never be late on purpose. I\'m the most punctual person you know. And you know I\'d never lie to you."',
+      indicators: <String>[
+        'Ties the time to when her podcast started',
+        'Mentions the man in the Lakers hat with a flashlight',
+        'Admits she can\'t remember if she texted',
+        'Says she would never be late on purpose',
+        'Calls herself the most punctual person you know',
+        'Adds that she would never lie to you',
+      ],
+      answers: <int>{0, 1, 2},
+      insight: 'Tying a time to something else (the podcast), an odd detail she didn\'t need (the flashlight guy) and admitting a memory gap are hard to invent. "Never on purpose", "most punctual" and "never lie" are credibility pitches: they argue instead of describe.',
+    ),
+    Challenge.cluster(
+      id: 't12',
+      level: 6,
+      flag: Flag.truthMarkers,
+      prompt: 'Tap the 3 signs this account is likely truthful.',
+      profile: 'A coworker explains how the office coffee machine broke:\n\n"I put my mug under, hit the large button, and it made this grinding noise, like a blender full of gravel. Then it just stopped. I unplugged it, which maybe was wrong, I don\'t know. Priya came in right after and said, \'Mine did that yesterday too.\' I\'m extremely careful with equipment. Anyone here will tell you I\'d never break something and not say so."',
+      indicators: <String>[
+        'Describes the noise as a blender full of gravel',
+        'Admits unplugging it may have been wrong',
+        'Quotes what Priya said about the day before',
+        'Says he is extremely careful with equipment',
+        'Says anyone will vouch for him',
+        'Says he would never hide breaking something',
+      ],
+      answers: <int>{0, 1, 2},
+      insight: 'A vivid sensory detail (the gravel noise), a concession against himself (maybe unplugging was wrong) and a reproduced quote are truth markers. "Extremely careful" and "anyone will tell you" are character claims, not memories.',
+    ),
+    Challenge.scenario(
+      id: 'op1',
+      flag: Flag.openQuestion,
+      context: 'Your friend Jordan might know who scratched your bike, but he gets defensive easily. You want his honest version of what he saw.',
+      moves: <String>[
+        'Ask: "Tell me what you saw at the bike rack yesterday."',
+        'Ask: "Did you see Marcus scratch my bike?"',
+        'Ask: "You saw who did it, right?"',
+        'Tell him what you think happened, then ask if he agrees.',
+      ],
+      answer: 0,
+      insight: 'An open question gets his memory, not your theory. "Did you see Marcus…" plants a name and invites a yes or no. Leading questions get agreement, not information.',
+    ),
+    Challenge.scenario(
+      id: 'op2',
+      flag: Flag.rapport,
+      context: 'You need to ask your little cousin about a broken lamp. She\'s nervous and won\'t look at you.',
+      moves: <String>[
+        'Sit down at her level and chat about her day first.',
+        'Stand over her and tell her she needs to tell the truth right now.',
+        'Tell her you already know she did it.',
+        'Keep asking the same question until she answers.',
+      ],
+      answer: 0,
+      insight: 'Scared people, especially kids, either shut down or say whatever ends the pressure. Rapport first (calm, at eye level, small talk) gets more true information, and an answer you can believe.',
+    ),
+    Challenge.statement(
+      id: 'ck15',
+      flag: Flag.vagueCore,
+      level: 9,
+      prompt: 'Tap the sentence that can\'t be checked where it matters, if there is one.',
+      question: 'Asked why he missed curfew by an hour:',
+      sentences: <String>[
+        'I left Ty\'s house at 10:40, right after the game ended.',
+        'His street was blocked off, so I had to go around.',
+        'Then I kind of ended up somewhere else for a bit.',
+        'I pulled into the driveway at 11:55; I remember the clock.',
+      ],
+      answer: 2,
+      insight: 'Times and places on both sides, then "somewhere else for a bit" right where an hour disappears. A detour around a blocked street takes minutes, not an hour. Ask where "somewhere else" was.',
+    ),
+    Challenge.statement(
+      id: 'ck16',
+      flag: Flag.vagueCore,
+      level: 9,
+      highLoad: true,
+      prompt: 'Tap the sentence that can\'t be checked where it matters, if there is one.',
+      question: 'A coworker explains why the client presentation went out late:',
+      sentences: <String>[
+        'I finished the slides Tuesday at four and saved them to the team drive.',
+        'Dana reviewed them at five and left two comments, which I fixed.',
+        'Wednesday morning there were some issues with things on my end.',
+        'By the time those were sorted, the client had already called.',
+        'I sent it at 11:20 with an apology; it\'s in the email thread.',
+      ],
+      answer: 2,
+      insight: 'Clear, checkable steps (the drive, Dana\'s comments, the email thread) until the moment it went wrong, which becomes "some issues with things". Real problems have names: the laptop died, the file wouldn\'t open. Ask what the issue was.',
+    ),
+    Challenge.scenario(
+      id: 'lw13',
+      level: 10,
+      flag: Flag.evidenceTiming,
+      context: 'Your roommate says he hasn\'t touched your PlayStation. The game history shows a new save last night, in a game you don\'t play.',
+      moves: <String>[
+        'Show him the save file right away.',
+        'Ask about his night first, then the game.',
+        'Ask him: "Did you play my PlayStation?"',
+        'Change your password and say nothing to him at all.',
+      ],
+      answer: 1,
+      insight: 'Let him describe his evening before you mention the save. If he says "I was out all night", the save contradicts him. Show it first and he\'ll just say a friend used it.',
+    ),
+    Challenge.scenario(
+      id: 'dj13',
+      level: 12,
+      flag: Flag.coldReading,
+      prompt: 'What\'s the best read?',
+      context: 'At a party, someone "reads your aura" and says: "You\'re loyal to your friends, but you\'ve been let down by someone you trusted." Everyone says she\'s scary accurate.',
+      moves: <String>[
+        'She sensed your past through your energy.',
+        'That\'s true of nearly everyone.',
+        'One of your friends told her about you.',
+        'She noticed something sad in your eyes.',
+      ],
+      answer: 1,
+      insight: 'Loyal to friends and let down by someone you trusted: true of nearly everyone, but it feels personal (Barnum statements). A cold reader says them confidently, then watches your face to see which part to build on.',
+    ),
   ];
 }
 
@@ -4213,9 +4377,10 @@ class QuestSession {
       return true;
     }
 
-    final candidates = Curriculum.challenges
-        .where((c) => c.highLoad && c.level == item.challenge.level && !usedIds.contains(c.id))
-        .toList();
+    // Lessons only swap within their own questions, so they stay distinct.
+    final source = node.isReview ? Curriculum.challenges : (Curriculum.lessonPools[node.id] ?? const <Challenge>[]);
+    final candidates =
+        source.where((c) => c.highLoad && c.level == item.challenge.level && !usedIds.contains(c.id)).toList();
     if (candidates.isEmpty) return false;
 
     final sameFlag = candidates.where((c) => c.flag == item.challenge.flag).toList();
@@ -4235,10 +4400,14 @@ class QuestBuilder {
   static QuestSession build(int nodeIndex, GameState game, math.Random rng) {
     final node = Curriculum.nodes[nodeIndex];
     if (!node.isReview) {
-      final pool = Curriculum.challenges.where((c) => !c.highLoad && c.level == node.level).toList()..shuffle(rng);
+      // Standard questions first, then this lesson's harder ones if it needs more.
+      final own = Curriculum.lessonPools[node.id] ?? const <Challenge>[];
+      final normal = own.where((c) => !c.highLoad).toList()..shuffle(rng);
+      final hard = own.where((c) => c.highLoad).toList()..shuffle(rng);
+      final picks = <Challenge>[...normal, ...hard].take(node.questLength).toList()..shuffle(rng);
       return QuestSession(
         nodeIndex: nodeIndex,
-        items: pool.take(node.questLength).map((c) => QuestItem(BaselineGenerator.live(c, rng).shuffled(rng))).toList(),
+        items: picks.map((c) => QuestItem(BaselineGenerator.live(c, rng).shuffled(rng))).toList(),
       );
     }
 
