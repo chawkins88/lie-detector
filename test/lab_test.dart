@@ -70,4 +70,67 @@ void main() {
     expect(b.insightPoints, ip);
     b.dispose();
   });
+
+  test('typed guesses: right, close (same field) or wrong', () {
+    const cases = <(String, String, GuessVerdict)>[
+      ('car mechanic', 'Mechanic', GuessVerdict.right),
+      ('mechnic', 'Mechanic', GuessVerdict.right),
+      ('welder', 'Mechanic', GuessVerdict.close),
+      ('a welder i think', 'Mechanic', GuessVerdict.close),
+      ('nurse', 'Mechanic', GuessVerdict.wrong),
+      ('asdfgh', 'Mechanic', GuessVerdict.unknown),
+      ('I think a fire fighter', 'Firefighter', GuessVerdict.right),
+      ('doctor', 'Nurse', GuessVerdict.close),
+      ('cook', 'Chef', GuessVerdict.right),
+      ('teacher', 'Guitar teacher', GuessVerdict.close),
+      ('musician', 'Guitar teacher', GuessVerdict.right),
+      ('mailman', 'Mail carrier', GuessVerdict.right),
+      ('ups driver', 'Truck driver', GuessVerdict.close),
+      ('electrician', 'Carpenter', GuessVerdict.close),
+      ('lawyer', 'Programmer', GuessVerdict.wrong),
+      ('software engineer', 'Programmer', GuessVerdict.right),
+      ('electrican', 'Electrician', GuessVerdict.right),
+      ('Nurses', 'Nurse', GuessVerdict.right),
+      ('they are a dentist', 'Dentist', GuessVerdict.right),
+      ('vet', 'Vet tech', GuessVerdict.right),
+      ('veteran', 'Vet tech', GuessVerdict.unknown),
+      ('waiter', 'Chef', GuessVerdict.close),
+      ('farmer', 'Landscaper', GuessVerdict.close),
+      ('hair stylist', 'Hairdresser', GuessVerdict.right),
+      ('it', 'Programmer', GuessVerdict.unknown),
+      ("it's a nurse", 'Nurse', GuessVerdict.right),
+      ('trainer', 'Personal trainer', GuessVerdict.right),
+      ('coach', 'Personal trainer', GuessVerdict.close),
+      ('plumber', 'House painter', GuessVerdict.close),
+      ('accountant', 'Lawyer', GuessVerdict.wrong),
+      ('music teacher', 'Teacher', GuessVerdict.close),
+      ('engineer', 'Electrician', GuessVerdict.wrong),
+    ];
+    for (final (guess, answer, verdict) in cases) {
+      expect(JobWords.judge(guess, answer).verdict, verdict, reason: '"$guess" for $answer');
+    }
+    expect(JobWords.judge('welder', 'Mechanic').field, 'skilled trades');
+  });
+
+  test('every Case Files job is known by name, and names don\'t collide', () {
+    for (final job in Deduction.jobs) {
+      expect(JobWords.targets.containsKey(job.name), isTrue, reason: job.name);
+      expect(JobWords.judge(job.name, job.name).verdict, GuessVerdict.right, reason: job.name);
+      for (final alias in JobWords.targets[job.name]!.$2) {
+        expect(JobWords.judge(alias, job.name).verdict, GuessVerdict.right, reason: alias);
+      }
+    }
+    final seen = <String>{};
+    for (final e in JobWords.targets.entries) {
+      for (final a in e.value.$2) {
+        expect(seen.add(JobWords.words(a).join(' ')), isTrue, reason: 'duplicate name: $a');
+      }
+    }
+    for (final k in JobWords.others.keys) {
+      expect(seen.add(JobWords.words(k).join(' ')), isTrue, reason: 'duplicate name: $k');
+      for (final f in JobWords.others[k]!) {
+        expect(JobWords.fieldNames.containsKey(f), isTrue, reason: '$k field $f');
+      }
+    }
+  });
 }

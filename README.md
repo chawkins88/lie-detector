@@ -106,7 +106,9 @@ On the Practice tab.
 
 - **Deduction Lab:** read someone's job from clues, Patrick Jane style. Two lessons
   (how Jane does it; what to look at), endless Case Files (20 jobs, 100 clues, one
-  decoy per case), and a People Watching log for real-life guesses.
+  decoy per case), Type Your Guess (type the job: right = 1 point, same field like
+  mechanic vs. welder = ½, typos and other names for the job count), and a People
+  Watching log for real-life guesses.
 - **Poker Face:** bluffing for games (Two Truths & a Lie, poker, Werewolf, Among Us,
   surprise parties). Two lessons, a "Which Sounds True?" drill, and a tracker for how
   often you fool your friends.

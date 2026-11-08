@@ -4184,7 +4184,7 @@ class GameState extends ChangeNotifier {
           }
         });
       }
-      _readCounts(data['labBest'], labBest, const <String, String>{'deduce': 'deduce', 'convince': 'convince'});
+      _readCounts(data['labBest'], labBest, const <String, String>{'deduce': 'deduce', 'deduceTyped': 'deduceTyped', 'convince': 'convince'});
       final pk = data['poker'];
       if (pk is List && pk.length == 4 && pk.every((v) => v is int)) {
         for (var i = 0; i < 4; i++) {
@@ -16596,6 +16596,491 @@ class Deduction {
   }
 }
 
+/// Matches a typed job guess: right (same job, any common name or a small
+/// typo), close (same field, like mechanic and welder) or wrong.
+enum GuessVerdict { right, close, wrong, unknown }
+
+class GuessResult {
+  const GuessResult(this.verdict, [this.matched = '', this.field = '']);
+  final GuessVerdict verdict;
+
+  /// The job the guess was read as.
+  final String matched;
+
+  /// A field the guess shares with the answer (for close guesses).
+  final String field;
+}
+
+class JobWords {
+  JobWords._();
+
+  static const Map<String, String> fieldNames = <String, String>{
+    'healthcare': 'healthcare',
+    'animals': 'working with animals',
+    'food': 'food and restaurants',
+    'trades': 'skilled trades',
+    'outdoor': 'outdoor work',
+    'delivery': 'driving and delivery',
+    'tech': 'tech',
+    'finance': 'money and offices',
+    'law': 'law',
+    'education': 'teaching',
+    'beauty': 'hair and beauty',
+    'fitness': 'fitness',
+    'emergency': 'emergency services',
+    'music': 'music',
+    'creative': 'creative work',
+    'retail': 'retail',
+  };
+
+  /// Fields and accepted names for each job in the Case Files.
+  static const Map<String, (List<String>, List<String>)> targets = <String, (List<String>, List<String>)>{
+    'Nurse': (<String>['healthcare'], <String>['nurse', 'registered nurse', 'rn', 'lpn', 'nurse practitioner', 'er nurse']),
+    'Dentist': (<String>['healthcare'], <String>['dentist', 'orthodontist', 'dental surgeon']),
+    'Vet tech': (<String>['healthcare', 'animals'], <String>['vet tech', 'vet', 'veterinarian', 'veterinary technician', 'vet assistant', 'animal doctor', 'vet nurse']),
+    'Chef': (<String>['food'], <String>['chef', 'cook', 'line cook', 'sous chef', 'head chef', 'kitchen worker']),
+    'Barista': (<String>['food'], <String>['barista', 'coffee shop worker', 'coffee maker', 'starbucks worker']),
+    'Electrician': (<String>['trades'], <String>['electrician', 'electrical worker', 'electric guy', 'lineman']),
+    'Carpenter': (<String>['trades'], <String>['carpenter', 'woodworker', 'cabinet maker', 'framer', 'furniture maker']),
+    'Mechanic': (<String>['trades'], <String>['mechanic', 'car mechanic', 'auto mechanic', 'auto technician', 'car repair', 'garage worker', 'diesel mechanic']),
+    'House painter': (<String>['trades'], <String>['painter', 'house painter', 'wall painter']),
+    'Landscaper': (<String>['outdoor'], <String>['landscaper', 'gardener', 'lawn care', 'groundskeeper', 'lawn mower', 'yard worker']),
+    'Mail carrier': (<String>['delivery'], <String>['mail carrier', 'mailman', 'mail man', 'postman', 'postal worker', 'mail lady', 'letter carrier']),
+    'Truck driver': (<String>['delivery'], <String>['truck driver', 'trucker', 'semi driver', 'long haul driver']),
+    'Programmer': (<String>['tech'], <String>['programmer', 'software engineer', 'software developer', 'developer', 'coder', 'web developer', 'computer programmer']),
+    'Accountant': (<String>['finance'], <String>['accountant', 'cpa', 'bookkeeper', 'tax preparer', 'auditor']),
+    'Lawyer': (<String>['law'], <String>['lawyer', 'attorney', 'defense attorney', 'prosecutor', 'legal counsel']),
+    'Teacher': (<String>['education'], <String>['teacher', 'school teacher', 'high school teacher', 'elementary teacher', 'math teacher', 'english teacher', 'educator']),
+    'Hairdresser': (<String>['beauty'], <String>['hairdresser', 'hair stylist', 'hairstylist', 'stylist', 'barber', 'hair dresser']),
+    'Personal trainer': (<String>['fitness'], <String>['personal trainer', 'trainer', 'fitness trainer', 'gym trainer', 'fitness coach']),
+    'Firefighter': (<String>['emergency'], <String>['firefighter', 'fireman', 'fire fighter', 'firemen']),
+    'Guitar teacher': (<String>['music', 'education', 'creative'], <String>['guitar teacher', 'guitarist', 'musician', 'music teacher', 'guitar player', 'guitar instructor']),
+  };
+
+  /// Other jobs people might type, with their fields.
+  static const Map<String, List<String>> others = <String, List<String>>{
+    'doctor': <String>['healthcare'],
+    'physician': <String>['healthcare'],
+    'surgeon': <String>['healthcare'],
+    'pharmacist': <String>['healthcare'],
+    'physical therapist': <String>['healthcare', 'fitness'],
+    'dental hygienist': <String>['healthcare'],
+    'medical assistant': <String>['healthcare'],
+    'caregiver': <String>['healthcare'],
+    'cna': <String>['healthcare'],
+    'midwife': <String>['healthcare'],
+    'optometrist': <String>['healthcare'],
+    'radiologist': <String>['healthcare'],
+    'paramedic': <String>['healthcare', 'emergency'],
+    'emt': <String>['healthcare', 'emergency'],
+    'police officer': <String>['emergency'],
+    'cop': <String>['emergency'],
+    'police': <String>['emergency'],
+    'security guard': <String>['emergency'],
+    'soldier': <String>['emergency'],
+    'lifeguard': <String>['emergency', 'fitness'],
+    'detective': <String>['emergency'],
+    'baker': <String>['food'],
+    'waiter': <String>['food'],
+    'waitress': <String>['food'],
+    'server': <String>['food'],
+    'bartender': <String>['food'],
+    'dishwasher': <String>['food'],
+    'butcher': <String>['food'],
+    'fast food worker': <String>['food'],
+    'plumber': <String>['trades'],
+    'welder': <String>['trades'],
+    'construction worker': <String>['trades'],
+    'roofer': <String>['trades'],
+    'hvac technician': <String>['trades'],
+    'contractor': <String>['trades'],
+    'handyman': <String>['trades'],
+    'machinist': <String>['trades'],
+    'mason': <String>['trades'],
+    'bricklayer': <String>['trades'],
+    'builder': <String>['trades'],
+    'locksmith': <String>['trades'],
+    'auto body': <String>['trades'],
+    'tiler': <String>['trades'],
+    'farmer': <String>['outdoor', 'animals'],
+    'rancher': <String>['outdoor', 'animals'],
+    'arborist': <String>['outdoor'],
+    'tree trimmer': <String>['outdoor'],
+    'park ranger': <String>['outdoor'],
+    'fisherman': <String>['outdoor'],
+    'delivery driver': <String>['delivery'],
+    'ups driver': <String>['delivery'],
+    'fedex driver': <String>['delivery'],
+    'courier': <String>['delivery'],
+    'bus driver': <String>['delivery'],
+    'taxi driver': <String>['delivery'],
+    'uber driver': <String>['delivery'],
+    'pilot': <String>['delivery'],
+    'amazon driver': <String>['delivery'],
+    'it support': <String>['tech'],
+    'web designer': <String>['tech', 'creative'],
+    'data scientist': <String>['tech'],
+    'game developer': <String>['tech', 'creative'],
+    'graphic designer': <String>['tech', 'creative'],
+    'engineer': <String>['tech'],
+    'banker': <String>['finance'],
+    'bank teller': <String>['finance'],
+    'financial advisor': <String>['finance'],
+    'office manager': <String>['finance'],
+    'receptionist': <String>['finance'],
+    'secretary': <String>['finance'],
+    'real estate agent': <String>['finance'],
+    'insurance agent': <String>['finance'],
+    'office worker': <String>['finance', 'tech'],
+    'paralegal': <String>['law'],
+    'judge': <String>['law'],
+    'legal assistant': <String>['law'],
+    'professor': <String>['education'],
+    'tutor': <String>['education'],
+    'principal': <String>['education'],
+    'teaching assistant': <String>['education'],
+    'substitute teacher': <String>['education'],
+    'librarian': <String>['education'],
+    'daycare worker': <String>['education'],
+    'nail tech': <String>['beauty'],
+    'makeup artist': <String>['beauty', 'creative'],
+    'esthetician': <String>['beauty'],
+    'cosmetologist': <String>['beauty'],
+    'coach': <String>['fitness', 'education'],
+    'yoga instructor': <String>['fitness'],
+    'athlete': <String>['fitness'],
+    'pe teacher': <String>['fitness', 'education'],
+    'swim instructor': <String>['fitness'],
+    'singer': <String>['music', 'creative'],
+    'drummer': <String>['music', 'creative'],
+    'pianist': <String>['music', 'creative'],
+    'dj': <String>['music', 'creative'],
+    'piano teacher': <String>['music', 'education'],
+    'band member': <String>['music', 'creative'],
+    'artist': <String>['creative'],
+    'photographer': <String>['creative'],
+    'writer': <String>['creative'],
+    'actor': <String>['creative'],
+    'dog groomer': <String>['animals'],
+    'zookeeper': <String>['animals', 'outdoor'],
+    'dog walker': <String>['animals'],
+    'cashier': <String>['retail'],
+    'retail worker': <String>['retail'],
+    'store clerk': <String>['retail'],
+    'sales associate': <String>['retail'],
+  };
+
+  static final List<(List<String>, String, List<String>, String?)> _entries = <(List<String>, String, List<String>, String?)>[
+    for (final e in targets.entries)
+      for (final alias in e.value.$2) (words(alias), alias, e.value.$1, e.key),
+    for (final e in others.entries) (words(e.key), e.key, e.value, null),
+  ];
+
+  /// Lowercase words, punctuation dropped, simple plurals made singular.
+  static List<String> words(String text) {
+    final cleaned = text.toLowerCase().replaceAll("'", '').replaceAll(RegExp('[^a-z ]'), ' ');
+    return <String>[
+      for (final t in cleaned.split(' '))
+        if (t.isNotEmpty) (t.length > 3 && t.endsWith('s') && !t.endsWith('ss')) ? t.substring(0, t.length - 1) : t,
+    ];
+  }
+
+  static int _distance(String a, String b) {
+    var prev = List<int>.generate(b.length + 1, (i) => i);
+    for (var i = 1; i <= a.length; i++) {
+      final cur = <int>[i];
+      for (var j = 1; j <= b.length; j++) {
+        cur.add(math.min(math.min(prev[j] + 1, cur[j - 1] + 1), prev[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1)));
+      }
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+
+  /// Same word, or a small typo in a longer word.
+  static bool _near(String a, String b) {
+    if (a == b) return true;
+    final n = math.min(a.length, b.length);
+    if (n >= 8) return _distance(a, b) <= 2;
+    if (n >= 5) return _distance(a, b) <= 1;
+    return false;
+  }
+
+  /// The job a typed guess most likely means, or null.
+  static (String, List<String>, String?)? read(String guess) {
+    final g = words(guess);
+    final joined = g.join();
+    int? bestScore;
+    (String, List<String>, String?)? best;
+    for (final (alias, name, fields, target) in _entries) {
+      int? score;
+      for (var i = 0; i + alias.length <= g.length; i++) {
+        var ok = true;
+        var exact = 0;
+        for (var k = 0; k < alias.length; k++) {
+          if (!_near(g[i + k], alias[k])) {
+            ok = false;
+            break;
+          }
+          if (g[i + k] == alias[k]) exact++;
+        }
+        if (ok) {
+          score = alias.length * 100 + exact * 10 + name.length;
+          break;
+        }
+      }
+      if (score == null) {
+        final aj = alias.join();
+        if (aj.length >= 5 && _near(joined, aj)) score = alias.length * 100 + name.length;
+      }
+      if (score != null && (bestScore == null || score > bestScore)) {
+        bestScore = score;
+        best = (name, fields, target);
+      }
+    }
+    return best;
+  }
+
+  static GuessResult judge(String guess, String answer) {
+    final hit = read(guess);
+    if (hit == null) return const GuessResult(GuessVerdict.unknown);
+    final (name, fields, target) = hit;
+    if (target == answer) return GuessResult(GuessVerdict.right, name);
+    final answerFields = targets[answer]?.$1 ?? const <String>[];
+    final shared = fields.where(answerFields.contains).toList();
+    if (shared.isEmpty) return GuessResult(GuessVerdict.wrong, name);
+    return GuessResult(GuessVerdict.close, name, fieldNames[shared.first] ?? shared.first);
+  }
+}
+
+/// Half points shown as "7.5".
+String halfPoints(int points) => points.isEven ? '${points ~/ 2}' : '${points ~/ 2}.5';
+
+/// Deduction Lab: read the clues, then type the job. Close guesses get half credit.
+class TypedDeductionScreen extends StatefulWidget {
+  const TypedDeductionScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<TypedDeductionScreen> createState() => _TypedDeductionScreenState();
+}
+
+class _TypedDeductionScreenState extends State<TypedDeductionScreen> {
+  static const int rounds = 10;
+
+  final math.Random _rng = math.Random();
+  final TextEditingController _input = TextEditingController();
+  late List<(JobProfile, LabQuestion)> _cases = _newCases();
+  int _index = 0;
+  int _points = 0;
+  GuessResult? _result;
+  String _hint = '';
+  bool _done = false;
+  bool _newBest = false;
+
+  List<(JobProfile, LabQuestion)> _newCases() => <(JobProfile, LabQuestion)>[
+        for (final job in (List<JobProfile>.of(Deduction.jobs)..shuffle(_rng)).take(rounds))
+          (job, Deduction.makeFor(job, _rng)),
+      ];
+
+  @override
+  void dispose() {
+    _input.dispose();
+    super.dispose();
+  }
+
+  void _submit({bool giveUp = false}) {
+    if (_result != null) return;
+    final (job, _) = _cases[_index];
+    final text = _input.text.trim();
+    if (!giveUp && text.isEmpty) return;
+    final r = giveUp ? const GuessResult(GuessVerdict.wrong) : JobWords.judge(text, job.name);
+    if (r.verdict == GuessVerdict.unknown) {
+      HapticFeedback.heavyImpact();
+      setState(() => _hint = 'I don\'t recognize "$text" as a job. Try a common name, like "nurse" or "mechanic".');
+      return;
+    }
+    switch (r.verdict) {
+      case GuessVerdict.right:
+        _points += 2;
+        HapticFeedback.mediumImpact();
+      case GuessVerdict.close:
+        _points += 1;
+        HapticFeedback.mediumImpact();
+      case GuessVerdict.wrong:
+      case GuessVerdict.unknown:
+        HapticFeedback.heavyImpact();
+    }
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _result = r;
+      _hint = '';
+    });
+  }
+
+  void _next() {
+    if (_index + 1 >= _cases.length) {
+      _newBest = widget.game.reportLab('deduceTyped', _points);
+      setState(() => _done = true);
+      return;
+    }
+    _input.clear();
+    setState(() {
+      _index++;
+      _result = null;
+      _hint = '';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: SafeArea(child: _done ? _buildDone() : _buildCase()),
+    );
+  }
+
+  Widget _buildDone() {
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: <Widget>[
+          const Spacer(),
+          Text(_newBest ? '🏆' : '🔍', style: const TextStyle(fontSize: 64)),
+          const SizedBox(height: 10),
+          Text('${halfPoints(_points)} / $rounds',
+              style: const TextStyle(color: Palette.textPrimary, fontSize: 34, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 6),
+          Text('${_newBest ? 'New best! ' : ''}+${_points * GameState.labIp} IP',
+              style: const TextStyle(color: Palette.gold, fontSize: 17, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          const Text('Right = 1 point · Close (same field) = ½ point',
+              style: TextStyle(color: Palette.textMuted, fontSize: 13)),
+          const Spacer(),
+          ChunkyButton(label: 'Done', color: Palette.teal, onPressed: () => Navigator.of(context).pop()),
+          TextButton(
+            onPressed: () => setState(() {
+              _cases = _newCases();
+              _index = 0;
+              _points = 0;
+              _result = null;
+              _hint = '';
+              _done = false;
+              _newBest = false;
+              _input.clear();
+            }),
+            child: const Text('AGAIN', style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCase() {
+    final (job, q) = _cases[_index];
+    final r = _result;
+    final String verdictText;
+    final Color verdictColor;
+    if (r == null) {
+      verdictText = '';
+      verdictColor = Palette.textMuted;
+    } else if (r.verdict == GuessVerdict.right) {
+      verdictText = '✅ Right! ${job.emoji} ${job.name}.';
+      verdictColor = Palette.green;
+    } else if (r.verdict == GuessVerdict.close) {
+      verdictText = '🟡 Close! "${r.matched}" is in the same field (${r.field}). It was ${job.emoji} ${job.name}. Half a point.';
+      verdictColor = Palette.gold;
+    } else {
+      verdictText = r.matched.isEmpty
+          ? 'It was ${job.emoji} ${job.name}.'
+          : '❌ Not quite: "${r.matched}" is a different field. It was ${job.emoji} ${job.name}.';
+      verdictColor = Palette.orange;
+    }
+    return Column(
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 4, 16, 0),
+          child: Row(
+            children: <Widget>[
+              IconButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+                icon: const Icon(Icons.close, color: Palette.textMuted),
+              ),
+              const Expanded(
+                child: Text('TYPE YOUR GUESS',
+                    style: TextStyle(color: Palette.teal, fontWeight: FontWeight.w900, letterSpacing: 1.3)),
+              ),
+              Text('${_index + 1}/$rounds · ${halfPoints(_points)} pts',
+                  style: const TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800)),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            children: <Widget>[
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Palette.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Palette.border, width: 1.5),
+                ),
+                child: Text(q.context, style: const TextStyle(color: Palette.textPrimary, fontSize: 15.5, height: 1.5)),
+              ),
+              const SizedBox(height: 14),
+              const Text('What do they do for work?',
+                  style: TextStyle(color: Palette.textPrimary, fontSize: 18, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _input,
+                enabled: r == null,
+                autofocus: true,
+                textInputAction: TextInputAction.done,
+                textCapitalization: TextCapitalization.none,
+                onSubmitted: (_) => _submit(),
+                style: const TextStyle(color: Palette.textPrimary, fontSize: 17),
+                decoration: InputDecoration(
+                  hintText: 'Type a job, e.g. "electrician"',
+                  hintStyle: const TextStyle(color: Palette.textMuted),
+                  filled: true,
+                  fillColor: Palette.surfaceHigh,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
+              if (_hint.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 8),
+                InfoBanner(icon: Icons.help_outline, color: Palette.orange, text: _hint),
+              ],
+              if (r != null) ...<Widget>[
+                const SizedBox(height: 12),
+                Text(verdictText, style: TextStyle(color: verdictColor, fontSize: 16, fontWeight: FontWeight.w800, height: 1.4)),
+                const SizedBox(height: 8),
+                InfoBanner(icon: Icons.lightbulb, color: Palette.teal, text: q.explain),
+              ],
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: r == null
+              ? Row(
+                  children: <Widget>[
+                    TextButton(
+                      onPressed: () => _submit(giveUp: true),
+                      child: const Text('GIVE UP', style: TextStyle(color: Palette.textMuted, fontWeight: FontWeight.w800)),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(child: ChunkyButton(label: 'Guess', color: Palette.teal, onPressed: _submit)),
+                  ],
+                )
+              : ChunkyButton(label: _index + 1 >= rounds ? 'See score' : 'Next', color: Palette.teal, onPressed: _next),
+        ),
+      ],
+    );
+  }
+}
+
 class LabQuestion {
   const LabQuestion({
     required this.prompt,
@@ -17134,6 +17619,13 @@ class _DeductionLabScreenState extends State<DeductionLabScreen> {
                     .map((j) => Deduction.makeFor(j, rng))
                     .toList(),
               )),
+            ),
+            _HubTile(
+              emoji: '⌨️',
+              title: 'Type Your Guess',
+              subtitle: 'No choices: type the job. Same field (like mechanic vs. welder) gets half credit.',
+              trailing: game.labBest['deduceTyped'] == null ? null : 'best ${halfPoints(game.labBest['deduceTyped']!)}/10',
+              onTap: () => _push(TypedDeductionScreen(game: game)),
             ),
             _hubSection('REAL LIFE: PEOPLE WATCHING'),
             Container(
