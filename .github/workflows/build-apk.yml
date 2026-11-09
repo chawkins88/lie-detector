@@ -94,10 +94,12 @@ jobs:
           APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
           "$APKSIGNER" verify --print-certs ColdReading.apk | grep -q "CN=MindHunter Academy"
 
-      - uses: actions/upload-artifact@v4
+      # Uploaded as the bare .apk (no zip), so the phone can install it straight
+      # from the download.
+      - uses: actions/upload-artifact@v7
         with:
-          name: ColdReading-apk
           path: ColdReading.apk
+          archive: false
           retention-days: 30
 
   install-test:
@@ -105,9 +107,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
-          name: ColdReading-apk
+          name: ColdReading.apk
 
       - name: Enable KVM
         run: |

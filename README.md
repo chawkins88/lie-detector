@@ -10,8 +10,8 @@ Every push to `main` builds an APK on GitHub Actions.
 
 1. On the phone, sign in to GitHub in the browser and open this repo's **Actions** tab.
 2. Open the latest green **Build Cold Reading APK** run.
-3. Under **Artifacts**, tap **ColdReading-apk** to download the .zip.
-4. Open the .zip in Files, tap `ColdReading.apk`, and allow "Install unknown apps" when asked.
+3. Under **Artifacts**, tap **ColdReading.apk** to download it (no zip to extract).
+4. Open it from your downloads and allow "Install unknown apps" when asked. Choose **Update** to keep your progress.
 
 Every build is signed with the same key (`signing/app.keystore`), so new versions install
 over old ones. It's a personal sideloading key, not a Play Store key.
