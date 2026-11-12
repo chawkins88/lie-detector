@@ -133,4 +133,30 @@ void main() {
       }
     }
   });
+
+  test('Think Like Jane cases are fair and play in four steps', () {
+    for (final c in ThinkLikeJane.cases) {
+      expect(c.steps.length, 4, reason: c.title);
+      for (final q in c.steps) {
+        expect(q.options.length, 4, reason: c.title);
+        expect(q.options.toSet().length, 4, reason: c.title);
+        final lengths = q.options.map((o) => o.length).toList();
+        final longestWrong = <int>[
+          for (var i = 0; i < 4; i++)
+            if (i != q.correct) lengths[i],
+        ].reduce(math.max);
+        expect(lengths[q.correct], lessThanOrEqualTo(longestWrong), reason: '${c.title}: ${q.prompt}');
+      }
+    }
+    final rng = math.Random(8);
+    final run = ThinkLikeJane.caseQuestions(rng);
+    expect(run.length, 8);
+    expect(run.first.context, contains('📁'));
+    final when = ThinkLikeJane.whenQuestions(rng);
+    expect(when.length, 10);
+    for (final q in when) {
+      expect(q.options.toSet().length, 4);
+      expect(q.explain, startsWith(q.options[q.correct]));
+    }
+  });
 }

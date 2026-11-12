@@ -4184,7 +4184,7 @@ class GameState extends ChangeNotifier {
           }
         });
       }
-      _readCounts(data['labBest'], labBest, const <String, String>{'deduce': 'deduce', 'deduceTyped': 'deduceTyped', 'convince': 'convince'});
+      _readCounts(data['labBest'], labBest, const <String, String>{'deduce': 'deduce', 'deduceTyped': 'deduceTyped', 'convince': 'convince', 'janeCases': 'janeCases', 'when': 'when'});
       final pk = data['poker'];
       if (pk is List && pk.length == 4 && pk.every((v) => v is int)) {
         for (var i = 0; i < 4; i++) {
@@ -4291,7 +4291,7 @@ enum MissionKind {
   hands('Play 5 blackjack hands', '♠️', 5, 2),
   poker('Play 5 poker hands', '♣️', 5, 2),
   weak('Finish a Weak Spot Training run', '🩹', 1, 2),
-  lab('Finish a Deduction Lab or Poker Face drill', '🔍', 1, 2);
+  lab('Finish a Deduction Lab, Poker Face or Think Like Jane drill', '🔍', 1, 2);
 
   const MissionKind(this.title, this.emoji, this.target, this.group);
   final String title;
@@ -10516,6 +10516,16 @@ class _PracticeHubScreenState extends State<PracticeHubScreen> {
               color: Palette.teal,
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(builder: (_) => const LieScienceScreen()),
+              ),
+            ),
+            _BigModeCard(
+              emoji: '🧠',
+              title: 'Think Like Jane',
+              subtitle: 'Not just his tricks: how he thinks, and when to use each technique.',
+              status: game.labBest['janeCases'] == null ? 'New' : 'Best: ${game.labBest['janeCases']}/8 case steps',
+              color: Palette.purple,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => ThinkLikeJaneScreen(game: game)),
               ),
             ),
             _BigModeCard(
@@ -17109,6 +17119,407 @@ class LabQuestion {
 }
 
 /// Pick the more convincing of two lines. For games only.
+/// A Think Like Jane case: one story, four steps (notice, explain, act, read).
+class JaneCase {
+  const JaneCase(this.title, this.story, this.steps);
+  final String title;
+  final String story;
+
+  /// Each step's context is extra information revealed at that step.
+  final List<LabQuestion> steps;
+
+  List<LabQuestion> play(math.Random rng) => <LabQuestion>[
+        for (var i = 0; i < steps.length; i++)
+          LabQuestion(
+            prompt: 'Step ${i + 1} of ${steps.length} · ${steps[i].prompt}',
+            context: '📁 $title\n\n$story${steps[i].context.isEmpty ? '' : '\n\n${steps[i].context}'}',
+            options: steps[i].options,
+            correct: steps[i].correct,
+            explain: steps[i].explain,
+          ).shuffled(rng),
+      ];
+}
+
+class ThinkLikeJane {
+  ThinkLikeJane._();
+
+  static const List<JaneCase> cases = <JaneCase>[
+    JaneCase(
+      'The Birthday Money',
+      'Your little brother says he "lost" the \$40 Grandma gave him for his birthday. He tells you at dinner, fast, without being asked. He\'s wearing wireless earbuds you\'ve never seen before.',
+      <LabQuestion>[
+        LabQuestion(
+          prompt: 'Notice: which detail matters most?',
+          options: <String>[
+            'He brought it up at dinner',
+            'The new earbuds',
+            'Grandma gave him the money',
+            'It was exactly forty dollars',
+          ],
+          correct: 1,
+          explain: 'Jane looks for the thing that doesn\'t fit the story. Money gone and brand-new earbuds in the same week is a coincidence worth asking about. Telling you fast, unasked, matters too: people often rush bad news to get ahead of a question.',
+        ),
+        LabQuestion(
+          prompt: 'Explain: what story fits every clue?',
+          options: <String>[
+            'He spent it on earbuds and fears Grandma\'s reaction',
+            'Someone at school stole it from his bag',
+            'He really lost it, and a friend lent him earbuds for a week',
+            'Grandma never actually gave him the money at all',
+          ],
+          correct: 0,
+          explain: 'The simplest story that explains the money, the earbuds and the rush is that he bought them. The friend story explains the earbuds but needs a second coincidence. Notice the motive: not greed, fear of disappointing Grandma.',
+        ),
+        LabQuestion(
+          prompt: 'Act: what would Jane do now?',
+          options: <String>[
+            'Say casually: "Nice earbuds. Where\'d you get them?"',
+            'Tell him you know he\'s lying and he should confess right now',
+            'Tell your parents right away before he can explain',
+            'Say nothing and search his room later',
+          ],
+          correct: 0,
+          explain: 'A friendly question about the side detail. He has to commit to a story without knowing what you suspect. An accusation makes him defensive; a light question makes him talk.',
+        ),
+        LabQuestion(
+          context: 'He says: "Uh… Jake gave them to me. Old ones. Why?" His ears turn red.',
+          prompt: 'Read: what does that tell you?',
+          options: <String>[
+            'Likely a cover story: he stalled, then asked why',
+            'He\'s telling the truth, because he named a friend',
+            'His red ears prove that he\'s lying',
+            'Nothing at all, so drop it and move on',
+          ],
+          correct: 0,
+          explain: '"Uh", a vague answer and "why?" back at you is stalling. Red ears alone prove nothing: Jane combines clues. His next move would be an easy way out: "Grandma wouldn\'t mind if you spent it, you know." People confess when it\'s safe to.',
+        ),
+      ],
+    ),
+    JaneCase(
+      'The Secret Costume',
+      'Your friend Marcus won\'t tell you his Halloween costume. Today he asked if you have white face paint, and there\'s a library book about the Titanic in his backpack.',
+      <LabQuestion>[
+        LabQuestion(
+          prompt: 'Notice: what should you focus on?',
+          options: <String>[
+            'Only the white face paint',
+            'Only the Titanic book',
+            'The paint and the book together',
+            'That he won\'t tell you anything',
+          ],
+          correct: 2,
+          explain: 'One clue alone means little: white paint fits a ghost, a clown or a mime. Two clues pointing at the same thing make a pattern. Jane always asks how the clues connect.',
+        ),
+        LabQuestion(
+          prompt: 'Explain: what fits both clues?',
+          options: <String>[
+            'A ghost from the Titanic',
+            'A sailor or a ship\'s captain',
+            'A clown, since clowns use white paint',
+            'He just has a school project due',
+          ],
+          correct: 0,
+          explain: 'Pale face + Titanic = a Titanic ghost. The captain fits the book but not the paint; a school project explains the book but not the paint. Pick the story that explains every clue.',
+        ),
+        LabQuestion(
+          prompt: 'Act: how would Jane check, without asking straight out?',
+          options: <String>[
+            'Mention the Titanic and watch his face',
+            'Ask him: "Is your costume a Titanic ghost?"',
+            'Look through his backpack when he isn\'t around',
+            'Ask everyone else what he\'s planning to wear',
+          ],
+          correct: 0,
+          explain: 'Jane\'s favorite move: bring it up sideways and watch. A quick grin, a glance at his bag or a sudden change of topic tells you more than an answer would.',
+        ),
+        LabQuestion(
+          context: 'You say: "Did you know the Titanic sank in under 3 hours?" He laughs a little too fast: "Random. Anyway, what are YOU going as?"',
+          prompt: 'Read: what does that tell you?',
+          options: <String>[
+            'You\'re close: a fast laugh, then a topic change',
+            'He has no interest in the Titanic at all',
+            'You guessed wrong, so start over from scratch',
+            'He\'s annoyed that you keep talking about history',
+          ],
+          correct: 0,
+          explain: 'A quick laugh plus an instant topic change is a classic "you\'re getting close" reaction. Now Jane would smile and say, "Great costume choice, by the way," and watch him crack.',
+        ),
+      ],
+    ),
+    JaneCase(
+      'The Quiet Friend',
+      'Your friend Ava usually talks nonstop, but she\'s been quiet all week. Today she says "I\'m fine, just tired." Her phone is face-down, and she flinches when it buzzes.',
+      <LabQuestion>[
+        LabQuestion(
+          prompt: 'Notice: which detail matters most?',
+          options: <String>[
+            'She says she\'s "fine"',
+            'The phone and the flinch',
+            'She says she\'s tired',
+            'It\'s been going on for a week',
+          ],
+          correct: 1,
+          explain: 'Going from chatty to quiet is a change from her baseline: something\'s wrong. The phone shows where: face-down and flinching means the problem is coming through it.',
+        ),
+        LabQuestion(
+          prompt: 'Explain: what\'s the best guess?',
+          options: <String>[
+            'Someone online is upsetting her',
+            'She\'s secretly mad at you about something',
+            'She really is just tired from school this week',
+            'She got a new phone and doesn\'t like it',
+          ],
+          correct: 0,
+          explain: 'Only one explanation covers the mood change AND the phone. "Just tired" explains the quiet, but not the flinch.',
+        ),
+        LabQuestion(
+          prompt: 'Act: what would Jane do?',
+          options: <String>[
+            'Keep asking questions until she finally tells you who\'s texting her',
+            'Find a quiet moment: "You seem off. I\'m here if you want to talk."',
+            'Read her messages when she leaves the phone out',
+            'Tell the group chat that she\'s acting weird',
+          ],
+          correct: 1,
+          explain: 'Jane reads people to help, not just to win. With a friend who\'s hurting, the move is safety, not pressure. People open up when they feel safe, not when they feel caught.',
+        ),
+        LabQuestion(
+          context: 'Later she says, "It\'s nothing. Just some people being annoying online." She sighs and her shoulders drop.',
+          prompt: 'Read: what does that tell you?',
+          options: <String>[
+            'She\'s relieved. Let her lead',
+            'She\'s lying, so press her for names',
+            'It really is nothing, so forget about it',
+            'She\'s hinting that it\'s your fault somehow',
+          ],
+          correct: 0,
+          explain: 'A sigh and dropped shoulders is relief, not deception. "It\'s nothing" followed by details means she\'s testing whether it\'s safe to say more. Ask an open question and let her set the pace. If it sounds like bullying, help her bring in an adult.',
+        ),
+      ],
+    ),
+    JaneCase(
+      'The Broken Controller',
+      'Your controller\'s thumbstick is broken. Your cousin Leo was the only one who used it yesterday. When you ask, he says, "It was already sticking when I started. I barely used it." He looks you in the eye and shrugs.',
+      <LabQuestion>[
+        LabQuestion(
+          prompt: 'Notice: which detail matters most?',
+          options: <String>[
+            'He says it was already sticking',
+            'He looked you right in the eye',
+            'He shrugged when he answered',
+            'He was the only one who used it',
+          ],
+          correct: 0,
+          explain: 'Eye contact and shrugs aren\'t evidence either way. His claim that it was already sticking can be checked, and Jane goes after what can be checked.',
+        ),
+        LabQuestion(
+          prompt: 'Explain: what do you know so far?',
+          options: <String>[
+            'Either could be true. You need more',
+            'He broke it, since he was the only one using it',
+            'He\'s innocent, because he made eye contact',
+            'Someone else snuck in and broke it later',
+          ],
+          correct: 0,
+          explain: 'Being the last one to use it makes him a suspect, not guilty. Jane keeps two explanations open until something tips the balance.',
+        ),
+        LabQuestion(
+          prompt: 'Act: what would Jane do now?',
+          options: <String>[
+            'Ask what he was playing when it started sticking',
+            'Tell him he owes you a new controller either way',
+            'Make him swear on his life that he didn\'t break it',
+            'Ban him from your room for the rest of the year',
+          ],
+          correct: 0,
+          explain: 'A detail question he can answer from memory if it\'s true. A real memory comes with a game, a moment and a feeling.',
+        ),
+        LabQuestion(
+          context: 'He answers right away: "Rocket League, second match. It kept drifting left, I died twice because of it. So annoying."',
+          prompt: 'Read: what now?',
+          options: <String>[
+            'Specific and annoyed: it\'s probably true',
+            'Too much detail, so he must be lying',
+            'He answered too fast, so it was rehearsed',
+            'Nothing changed, so he\'s still guilty',
+          ],
+          correct: 0,
+          explain: 'A quick, specific answer with a feeling attached is what a real memory sounds like. Thinking like Jane isn\'t about catching people, it\'s about finding out. Sometimes the answer is "innocent", and that\'s a win too.',
+        ),
+      ],
+    ),
+  ];
+
+  static const List<String> _techniques = <String>[
+    'Get their baseline first',
+    'Ask an open question',
+    'Ask for more detail',
+    'Ask something unexpected',
+    'Hold back what you know',
+    'Stay silent and wait',
+    'Ask again later',
+    'Talk to each one alone',
+    'Drop a hint and watch',
+    'Make a confident guess',
+    'Ease off the pressure',
+    'Just listen, don\'t read',
+    'Build rapport first',
+  ];
+
+  /// Which technique fits the moment: (situation, answer, wrong options, why).
+  static const List<(String, int, List<int>, String)> _when = <(String, int, List<int>, String)>[
+    ('You just met someone you\'ll want to read later.', 0, <int>[9, 4, 6],
+        'Before judging anything, learn how they normally talk, sit and move. Every tell is a change from that.'),
+    ('Something happened and you know almost nothing yet.', 1, <int>[4, 9, 3],
+        'Open questions ("Tell me about…") get them talking and give you material. Narrow questions come later.'),
+    ('Their story has a gap: "then I was just around for a while."', 2, <int>[0, 9, 7],
+        'Thin or vague spots are where to dig. Real memories expand when you ask; made-up ones stay thin.'),
+    ('Their story is smooth, like they\'ve told it many times.', 3, <int>[1, 11, 9],
+        'Rehearsed stories cover the main facts, not side details. An unexpected question raises the load.'),
+    ('You saw a text they don\'t know you saw.', 4, <int>[9, 8, 2],
+        'Let them commit to a story first, then compare. Reveal it early and they\'ll build around it.'),
+    ('They gave a short answer that feels unfinished.', 5, <int>[3, 10, 9],
+        'Silence makes people fill the gap, often with the part they were holding back.'),
+    ('You think a story is made up, but you\'re not sure.', 6, <int>[9, 4, 12],
+        'True details stay the same when retold. Made-up ones drift, or come out word for word.'),
+    ('Two friends tell the same story and you think they planned it.', 7, <int>[1, 9, 12],
+        'Together they follow each other\'s lead. Apart, the side details they didn\'t plan won\'t match.'),
+    ('You want to know a friend\'s secret Halloween costume.', 8, <int>[4, 6, 10],
+        'Bring it up sideways and watch: a grin, a glance or a topic change tells you you\'re close.'),
+    ('Three clues point the same way, and nothing big is at stake.', 9, <int>[6, 4, 12],
+        'State it like a fact, watch the reaction, and adjust if you\'re wrong. Low stakes means a miss costs nothing.'),
+    ('They\'re getting defensive, and their answers keep shrinking.', 10, <int>[3, 4, 9],
+        'Pressure makes honest and lying people both shut down. Lower the heat and let them talk again.'),
+    ('A friend is upset and just wants to vent.', 11, <int>[0, 3, 9],
+        'Not every moment is a puzzle. Reading someone who needs support feels like an interrogation. Just be there.'),
+    ('You need someone comfortable before you ask the big question.', 12, <int>[9, 3, 4],
+        'Small talk and calm first. Relaxed people say more, and their reactions to the big question stand out.'),
+    ('You already know the answer to a question you\'re about to ask.', 4, <int>[2, 9, 10],
+        'Ask it anyway, without revealing what you know. If their answer doesn\'t match the facts, you\'ve learned something.'),
+  ];
+
+  static List<LabQuestion> whenQuestions(math.Random rng) => <LabQuestion>[
+        for (final (situation, answer, wrong, why) in (List<(String, int, List<int>, String)>.of(_when)..shuffle(rng)).take(10))
+          LabQuestion(
+            context: situation,
+            prompt: 'Which technique fits this moment?',
+            options: <String>[for (final i in <int>[answer, ...wrong]) _techniques[i]],
+            correct: 0,
+            explain: '${_techniques[answer]}. $why',
+          ).shuffled(rng),
+      ];
+
+  static List<LabQuestion> caseQuestions(math.Random rng) => <LabQuestion>[
+        for (final c in (List<JaneCase>.of(cases)..shuffle(rng)).take(2)) ...c.play(rng),
+      ];
+
+  static const List<PokerLesson> lessons = <PokerLesson>[
+    PokerLesson('🧠', 'How Jane Thinks', <LessonPage>[
+      LessonPage('Ask "why?" about small things',
+          'Most people see a detail and move on. Jane turns odd details into questions: why is her coffee untouched? Why did he say "was"? Why is he dressed up on a Tuesday?'),
+      LessonPage('People, not facts',
+          'His first question is always: what does this person want, and what are they afraid of? Almost everything people hide comes from money, love, fear, shame or pride. Find the motive and the facts fall into place.'),
+      LessonPage('Notice what\'s missing',
+          'He spots the reaction that didn\'t happen: someone who never asks "is she okay?", a story with no feelings in it, someone who\'s too calm. Missing pieces often say more than what\'s there.'),
+      LessonPage('Hold three explanations',
+          'He never locks onto his first guess. For anything strange, come up with three reasons, then pick the one that explains every clue, not just one of them.'),
+      LessonPage('Test, don\'t just ask',
+          'Answers can be rehearsed; reactions can\'t. He drops a detail, makes a confident claim or leaves a silence, then watches what happens.'),
+      LessonPage('Stay relaxed and playful',
+          'He\'s never in a hurry and never desperate to be right. That relaxes people, and relaxed people say more. When he\'s wrong, he shrugs and adjusts.'),
+      LessonPage('Step into their shoes',
+          '"If I were her, why would I do that?" Feeling what the other person feels is how he guesses the motive.'),
+      LessonPage('Remember everything',
+          'Jane uses a memory palace. He catches lies when today\'s story doesn\'t match last week\'s. The Memory Gym trains exactly this.'),
+    ]),
+    PokerLesson('🧭', 'When to Use What', <LessonPage>[
+      LessonPage('Start of any conversation',
+          'Baseline first: how they normally talk and move. Then open questions to get them talking. Build rapport before anything big.'),
+      LessonPage('When a story feels off',
+          'Thin or vague? Ask for more detail. Too smooth? Ask something unexpected. Not sure? Ask again later and compare.'),
+      LessonPage('When you know something',
+          'Hold it back. Let them commit to their version first, then compare it with what you know.'),
+      LessonPage('When you want a secret',
+          'Drop a hint and watch, or make a confident guess when a few clues line up and the stakes are low.'),
+      LessonPage('When to stop',
+          'If they get defensive, ease off: pressure ends the information. If a friend is hurting, don\'t read them at all. Just listen.'),
+    ]),
+  ];
+}
+
+class ThinkLikeJaneScreen extends StatefulWidget {
+  const ThinkLikeJaneScreen({super.key, required this.game});
+  final GameState game;
+
+  @override
+  State<ThinkLikeJaneScreen> createState() => _ThinkLikeJaneScreenState();
+}
+
+class _ThinkLikeJaneScreenState extends State<ThinkLikeJaneScreen> {
+  GameState get game => widget.game;
+
+  void _push(Widget screen) =>
+      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen)).then((_) {
+        if (mounted) setState(() {});
+      });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Palette.background,
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+          children: <Widget>[
+            _hubHeader(context, 'Think Like Jane', game),
+            const InfoBanner(
+              icon: Icons.psychology,
+              color: Palette.purple,
+              text: 'Techniques are what Jane does. This trains how he thinks: notice what doesn\'t fit, explain '
+                  'every clue, pick the right move for the moment, then read the reaction.',
+            ),
+            _hubSection('LESSONS'),
+            for (final l in ThinkLikeJane.lessons)
+              _HubTile(
+                emoji: l.emoji,
+                title: l.title,
+                subtitle: '${l.pages.length} short cards',
+                onTap: () => _push(PokerLessonScreen(lesson: l)),
+              ),
+            _hubSection('PRACTICE'),
+            _HubTile(
+              emoji: '📁',
+              title: 'Jane\'s Cases',
+              subtitle: 'Two cases, step by step: notice, explain, act, read the reaction.',
+              trailing: game.labBest['janeCases'] == null ? null : 'best ${game.labBest['janeCases']}/8',
+              onTap: () => _push(LabQuizScreen(
+                game: game,
+                title: 'Jane\'s Cases',
+                drillKey: 'janeCases',
+                color: Palette.purple,
+                build: ThinkLikeJane.caseQuestions,
+              )),
+            ),
+            _HubTile(
+              emoji: '🧭',
+              title: 'Which Technique, When?',
+              subtitle: 'A moment, four techniques. Pick the one that fits.',
+              trailing: game.labBest['when'] == null ? null : 'best ${game.labBest['when']}/10',
+              onTap: () => _push(LabQuizScreen(
+                game: game,
+                title: 'Which Technique, When?',
+                drillKey: 'when',
+                color: Palette.purple,
+                build: ThinkLikeJane.whenQuestions,
+              )),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class PokerFace {
   PokerFace._();
 

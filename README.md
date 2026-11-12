@@ -100,7 +100,7 @@ about 5 minutes covers spaced review, Number Span and a rotating drill of the da
 
 Progress (both tabs) is saved on the phone with `shared_preferences`; nothing leaves the device.
 
-## Deduction Lab & Poker Face
+## Deduction Lab, Think Like Jane & Poker Face
 
 On the Practice tab.
 
@@ -109,6 +109,9 @@ On the Practice tab.
   decoy per case), Type Your Guess (type the job: right = 1 point, same field like
   mechanic vs. welder = ½, typos and other names for the job count), and a People
   Watching log for real-life guesses.
+- **Think Like Jane:** how he thinks, not just his tricks. Lessons on his habits of mind
+  and when to use each technique, Jane's Cases (step by step: notice, explain, act,
+  read the reaction), and a Which Technique, When? drill.
 - **Poker Face:** bluffing for games (Two Truths & a Lie, poker, Werewolf, Among Us,
   surprise parties). Two lessons, a "Which Sounds True?" drill, and a tracker for how
   often you fool your friends.
